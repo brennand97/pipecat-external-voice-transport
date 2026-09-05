@@ -1,4 +1,4 @@
-"""Deterministic development session used without a provider credential."""
+"""Deterministic provider session used without a provider credential."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from collections.abc import AsyncIterator
 from .session import AgentEvent
 
 
-class FakeDevelopmentSession:
-    """Minimal drop-in stand-in for a Pipecat development session."""
+class FakeAgentSession:
+    """Minimal drop-in stand-in for a Pipecat-backed agent session."""
 
     def __init__(self) -> None:
         self._events: asyncio.Queue[AgentEvent | None] = asyncio.Queue()

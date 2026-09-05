@@ -9,7 +9,7 @@ import time
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse
 
-from .agent.fake import FakeDevelopmentSession
+from .agent.fake import FakeAgentSession
 from .audio_input import PCMInput
 from .config import Settings
 from .protocol import (
@@ -100,10 +100,9 @@ def create_app(settings: Settings) -> FastAPI:
                 settings.max_audio_frame_bytes,
                 settings.max_buffered_audio_frames,
             )
-            # The orchestrator depends only on this small development-session
-            # lifecycle. Swap this fake for the Pipecat implementation by
-            # configuration; protocol handling remains unchanged.
-            agent = FakeDevelopmentSession()
+            # The orchestrator depends only on the isolated agent lifecycle.
+            # Provider implementation selection does not affect protocol handling.
+            agent = FakeAgentSession()
             await agent.start()
             drain_task = asyncio.create_task(_drain_pcm(input_pcm))
             await websocket.send_json(ready_message(start.session_id))

@@ -1,4 +1,4 @@
-"""Small development-style contract for a single provider conversation."""
+"""Isolated contract for a single provider conversation."""
 
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ class AgentEvent:
     text: str | None = None
 
 
-class DevelopmentSession(Protocol):
-    """The only lifecycle contract the WebSocket/session layer will use.
+class AgentSession(Protocol):
+    """Lifecycle contract between orchestration and agent features.
 
-    Implementations own their Pipecat pipeline, runner, queues, and provider
-    connection. This deliberately resembles a small standalone Pipecat example:
-    start it, feed native PCM, finish/cancel it, and consume its events.
+    Implementations own their Pipecat pipeline, runner, provider connection,
+    feature-specific queues, and tasks. Session authentication, protocol state,
+    audio ingress limits, and WebSocket handling remain outside this boundary.
     """
 
     async def start(self) -> None: ...
