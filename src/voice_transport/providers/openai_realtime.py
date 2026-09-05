@@ -178,6 +178,10 @@ class _PipecatPCMSource:
         from pipecat.processors.frame_processor import FrameProcessor
 
         class PCMSource(FrameProcessor):
+            async def process_frame(self, frame, direction) -> None:
+                await super().process_frame(frame, direction)
+                await self.push_frame(frame, direction)
+
             async def push_audio(self, pcm: bytes) -> None:
                 from pipecat.frames.frames import InputAudioRawFrame
 
@@ -204,6 +208,7 @@ class _PipecatEventSink:
                 self._text_parts: list[str] = []
 
             async def process_frame(self, frame, direction) -> None:
+                await super().process_frame(frame, direction)
                 from pipecat.frames.frames import (
                     LLMFullResponseEndFrame,
                     LLMFullResponseStartFrame,
