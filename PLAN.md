@@ -411,7 +411,19 @@ Maximum session duration: 5 minutes
 Maximum concurrent sessions: 2
 ```
 
-## 15. Home Assistant tools
+## 15. MCP tools (including Home Assistant)
+
+Implement a generic asynchronous tool interface with provider-neutral tool
+schemas, argument validation, and result/error models. Support two adapters:
+MCP is the primary path for Home Assistant and other networked tool servers,
+while custom in-process async tools can be registered directly. Use an async
+MCP client dependency with independent async connections per server; allow
+parallel discovery and invocation with bounded per-server concurrency and
+per-call timeouts. Home Assistant is configured as an MCP server rather than
+through a bespoke REST client. Provider adapters receive generic tool
+schemas/results only; the transport/session layer remains unaware of
+individual tool semantics.
+
 
 ### 15.1 Initial allowlist
 
@@ -436,7 +448,7 @@ Start with narrow tools:
 
 ### 15.3 Safety model
 
-- Enforce allowlists server-side, never only through prompting.
+- Enforce MCP server and tool allowlists server-side, never only through prompting.
 - Validate domains, services, entity IDs, values, and ranges.
 - Add confirmations for consequential actions.
 - Use idempotency keys where possible.
