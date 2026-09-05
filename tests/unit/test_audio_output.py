@@ -35,6 +35,19 @@ async def test_audio_stream_rejects_expired_or_revoked_capabilities(
         store.open(stream.stream_id, token)
 
 
+async def test_revoking_an_open_stream_stops_the_consumer() -> None:
+    store = AudioStreamStore(b"test-signing-key")
+    stream, _ = store.create(sample_rate=24_000)
+    chunks = stream.wav_chunks()
+    assert (await anext(chunks))[:4] == b"RIFF"
+    await stream.write(b"\x00\x00")
+    assert await anext(chunks) == b"\x00\x00"
+
+    await store.revoke(stream.stream_id)
+    with pytest.raises(StopAsyncIteration):
+        await anext(chunks)
+
+
 def test_audio_stream_rejects_invalid_token() -> None:
     store = AudioStreamStore(b"test-signing-key")
     stream, _ = store.create(sample_rate=24_000)
