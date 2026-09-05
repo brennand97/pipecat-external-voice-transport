@@ -10,6 +10,29 @@ from voice_transport.agent.session import AgentEvent, AgentSession
 from .base import RealtimeProviderConfig
 
 
+async def _cancel_bounded(awaitable, timeout: float) -> None:
+    task = asyncio.create_task(awaitable)
+    await _wait_task_bounded(task, timeout)
+
+
+async def _wait_task_bounded(task: asyncio.Task, timeout: float) -> None:
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if done:
+        # Retrieve exceptions so provider shutdown failures cannot become
+        # unobserved task warnings during session cleanup.
+        _consume_task_result(task)
+        return
+    task.cancel()
+    task.add_done_callback(_consume_task_result)
+
+
+def _consume_task_result(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
 class OpenAIRealtimeProvider:
     """Create Pipecat-backed sessions for OpenAI's Realtime API."""
 
@@ -95,23 +118,22 @@ class OpenAIRealtimeAgentSession:
         """Let provider-side semantic VAD close the user turn."""
 
     async def cancel(self) -> None:
-        if self._runner is not None:
-            await self._runner.cancel("external_transport_cancelled")
+        await self._stop_pipeline("external_transport_cancelled")
         await self._finish_events()
 
     async def close(self) -> None:
         if self._closed:
             return
-        self._closed = True
-        if self._runner is not None:
-            await self._runner.cancel("external_transport_closed")
-        if self._runner_task is not None:
-            try:
-                await asyncio.wait_for(self._runner_task, timeout=5)
-            except TimeoutError:
-                self._runner_task.cancel()
-                await asyncio.gather(self._runner_task, return_exceptions=True)
+        await self._stop_pipeline("external_transport_closed")
         await self._finish_events()
+
+    async def _stop_pipeline(self, reason: str) -> None:
+        """Stop provider tasks without allowing a remote close to block cleanup."""
+        if self._runner is not None:
+            await _cancel_bounded(self._runner.cancel(reason), timeout=3)
+        if self._runner_task is not None and not self._runner_task.done():
+            self._runner_task.cancel()
+            await _wait_task_bounded(self._runner_task, timeout=3)
 
     async def events(self) -> AsyncIterator[AgentEvent]:
         while event := await self._events.get():
