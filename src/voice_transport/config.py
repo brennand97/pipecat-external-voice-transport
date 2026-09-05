@@ -19,6 +19,9 @@ class Settings:
     max_audio_frame_bytes: int = 32_000
     max_input_bytes: int = 9_600_000
     max_buffered_audio_frames: int = 64
+    session_start_timeout_seconds: float = 5.0
+    input_idle_timeout_seconds: float = 20.0
+    max_session_seconds: float = 300.0
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -30,13 +33,32 @@ class Settings:
             max_frame = int(os.environ.get("MAX_AUDIO_FRAME_BYTES", "32000"))
             max_input = int(os.environ.get("MAX_INPUT_BYTES", "9600000"))
             max_buffered_frames = int(os.environ.get("MAX_BUFFERED_AUDIO_FRAMES", "64"))
+            session_start_timeout = float(
+                os.environ.get("SESSION_START_TIMEOUT_SECONDS", "5")
+            )
+            input_idle_timeout = float(
+                os.environ.get("INPUT_IDLE_TIMEOUT_SECONDS", "20")
+            )
+            max_session_seconds = float(os.environ.get("MAX_SESSION_SECONDS", "300"))
         except ValueError as err:
-            raise ConfigurationError("transport limits must be integers") from err
+            raise ConfigurationError("transport limits must be numeric") from err
         if (
             max_sessions < 1
             or max_frame < 2
             or max_input < max_frame
             or max_buffered_frames < 1
+            or session_start_timeout <= 0
+            or input_idle_timeout <= 0
+            or max_session_seconds <= 0
         ):
             raise ConfigurationError("transport limits are outside safe bounds")
-        return cls(token, max_sessions, max_frame, max_input, max_buffered_frames)
+        return cls(
+            token,
+            max_sessions,
+            max_frame,
+            max_input,
+            max_buffered_frames,
+            session_start_timeout,
+            input_idle_timeout,
+            max_session_seconds,
+        )

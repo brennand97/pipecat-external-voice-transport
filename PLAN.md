@@ -281,6 +281,16 @@ Kiosk pre-roll arrives as the first audio frames and does not need a provider-sp
 
 ## 10. Pipecat pipeline
 
+### 10.0 Session boundary
+
+The WebSocket layer is an orchestrator, not a Pipecat transport implementation.
+Each connection creates one small development-style provider session with this
+lifecycle: `start()`, `push_audio(pcm)`, `end_input()`, `cancel()`, consume
+`events()`, then `close()`. The Pipecat implementation owns its pipeline,
+worker, provider connection, and tasks behind that boundary. A deterministic
+fake implementation uses the same boundary in development and contract tests.
+
+
 Use Pipecat's OpenAI Realtime service and set the model explicitly. Do not rely on Pipecat's default model because it can change between versions.
 
 Initial model target:

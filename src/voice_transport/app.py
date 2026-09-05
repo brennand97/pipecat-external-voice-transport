@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse
 
+from .agent.fake import FakeDevelopmentSession
 from .audio_input import PCMInput
 from .config import Settings
 from .protocol import (
@@ -73,9 +75,18 @@ def create_app(settings: Settings) -> FastAPI:
         await websocket.accept()
         session: Session | None = None
         input_pcm: PCMInput | None = None
+        agent = None
         drain_task = None
         try:
-            first = await websocket.receive()
+            try:
+                first = await asyncio.wait_for(
+                    websocket.receive(), timeout=settings.session_start_timeout_seconds
+                )
+            except TimeoutError as err:
+                raise ProtocolViolation(
+                    "session_start_timeout",
+                    "Timed out waiting for session.start.",
+                ) from err
             if first.get("type") != "websocket.receive" or first.get("text") is None:
                 raise ProtocolViolation(
                     "invalid_first_message",
@@ -89,15 +100,46 @@ def create_app(settings: Settings) -> FastAPI:
                 settings.max_audio_frame_bytes,
                 settings.max_buffered_audio_frames,
             )
+            # The orchestrator depends only on this small development-session
+            # lifecycle. Swap this fake for the Pipecat implementation by
+            # configuration; protocol handling remains unchanged.
+            agent = FakeDevelopmentSession()
+            await agent.start()
             drain_task = asyncio.create_task(_drain_pcm(input_pcm))
             await websocket.send_json(ready_message(start.session_id))
+            session_started_at = time.monotonic()
 
             while True:
-                frame = await websocket.receive()
+                remaining = settings.max_session_seconds - (
+                    time.monotonic() - session_started_at
+                )
+                if remaining <= 0:
+                    raise ProtocolViolation(
+                        "session_duration_exceeded",
+                        "The maximum session duration was reached.",
+                    )
+                receive_timeout = min(settings.input_idle_timeout_seconds, remaining)
+                timeout_code = (
+                    "input_idle_timeout"
+                    if receive_timeout == settings.input_idle_timeout_seconds
+                    else "session_duration_exceeded"
+                )
+                try:
+                    frame = await asyncio.wait_for(
+                        websocket.receive(), timeout=receive_timeout
+                    )
+                except TimeoutError as err:
+                    message = (
+                        "No input was received before the idle timeout."
+                        if timeout_code == "input_idle_timeout"
+                        else "The maximum session duration was reached."
+                    )
+                    raise ProtocolViolation(timeout_code, message) from err
                 if frame.get("type") == "websocket.disconnect":
                     return
                 if frame.get("bytes") is not None:
                     await input_pcm.put(frame["bytes"])
+                    await agent.push_audio(frame["bytes"])
                     continue
                 if frame.get("text") is None:
                     raise ProtocolViolation(
@@ -109,6 +151,7 @@ def create_app(settings: Settings) -> FastAPI:
                     session.cancel()
                     await input_pcm.close()
                     await drain_task
+                    await agent.cancel()
                     session.finish()
                     await websocket.send_json(
                         {
@@ -120,27 +163,15 @@ def create_app(settings: Settings) -> FastAPI:
                 session.end_input()
                 await input_pcm.close()
                 await drain_task
-                # The deterministic fake agent validates framing, ordering, lifecycle,
-                # framing, ordering, lifecycle, and cleanup without a billable provider.
-                await websocket.send_json(
-                    {
-                        "type": "assistant.response_started",
+                await agent.end_input()
+                async for event in agent.events():
+                    response = {
+                        "type": event.type,
                         "session_id": session.start.session_id,
                     }
-                )
-                await websocket.send_json(
-                    {
-                        "type": "assistant.text.final",
-                        "session_id": session.start.session_id,
-                        "text": "External Transport test session received audio.",
-                    }
-                )
-                await websocket.send_json(
-                    {
-                        "type": "assistant.response_finished",
-                        "session_id": session.start.session_id,
-                    }
-                )
+                    if event.text is not None:
+                        response["text"] = event.text
+                    await websocket.send_json(response)
                 session.finish()
                 await websocket.send_json(
                     {"type": "session.finished", "session_id": session.start.session_id}
@@ -158,6 +189,8 @@ def create_app(settings: Settings) -> FastAPI:
         finally:
             if input_pcm is not None:
                 await input_pcm.close()
+            if agent is not None:
+                await agent.close()
             if drain_task is not None:
                 await drain_task
             if session is not None:
