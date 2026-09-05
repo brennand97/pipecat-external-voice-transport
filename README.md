@@ -56,17 +56,20 @@ The server currently supports:
    AUDIO_URL_SIGNING_KEY=replace-with-a-different-long-random-secret
    ```
 
-4. Select an image tag and start the service:
+4. Select a published immutable release tag and start the service:
 
    ```bash
-   IMAGE_TAG=main docker compose pull
-   IMAGE_TAG=main docker compose up -d
+   # Use the v* tag created from a passing GitHub release-tag workflow.
+   IMAGE_TAG=vX.Y.Z docker compose pull
+   IMAGE_TAG=vX.Y.Z docker compose up -d
    docker compose ps
    ```
 
-The included Compose file binds the service to `127.0.0.1:8080`. Publish it through a reverse proxy rather than exposing port 8080 directly.
+The included Compose file requires `IMAGE_TAG`; it deliberately has no mutable
+`main` or `latest` default. A matching `sha-<full-commit-sha>` tag is also
+published for every release and is suitable for exact rollback/reproducibility.
 
-For production, pin `IMAGE_TAG` to a tested immutable release or image digest instead of `main`.
+The included Compose file binds the service to `127.0.0.1:8080`. Publish it through a reverse proxy rather than exposing port 8080 directly.
 
 ## Reverse proxy requirements
 

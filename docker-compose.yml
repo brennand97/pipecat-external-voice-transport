@@ -1,6 +1,6 @@
 services:
   pipecat-external-voice-transport:
-    image: ghcr.io/brennand97/pipecat-external-voice-transport:${IMAGE_TAG:-main}
+    image: ghcr.io/brennand97/pipecat-external-voice-transport:${IMAGE_TAG:?Set IMAGE_TAG to an immutable v* or sha-* release tag}
     restart: unless-stopped
     env_file:
       - path: .env
