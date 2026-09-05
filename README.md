@@ -4,14 +4,14 @@ A network service implementing the provider-neutral Voice Satellite External Tra
 
 ## Phase 1 status
 
-The service currently provides an authenticated protocol skeleton with health/readiness endpoints, strict v1 validation, bounded ordered PCM handoff with backpressure, concurrency limits, cancellation, and deterministic fake-agent completion. It **does not yet include Pipecat, OpenAI Realtime, Home Assistant tools, or streaming output audio**. Do not select it for production satellite use until later phases are complete.
+The service currently provides an authenticated protocol skeleton with health/readiness endpoints, strict v1 validation, bounded ordered PCM handoff with backpressure, concurrency limits, cancellation, and deterministic fake-agent completion. Its provider boundary supports `fake` and a Pipecat-backed `openai_realtime` implementation with an explicit model. Streaming output audio, Home Assistant tools, and production validation of the provider path are still pending; do not select it for production satellite use yet.
 
 ## Local development
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e '.[realtime,dev]'
 pytest
 ruff check .
 EXTERNAL_TRANSPORT_TOKEN=development-token \

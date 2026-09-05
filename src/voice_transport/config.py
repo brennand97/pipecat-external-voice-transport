@@ -22,12 +22,28 @@ class Settings:
     session_start_timeout_seconds: float = 5.0
     input_idle_timeout_seconds: float = 20.0
     max_session_seconds: float = 300.0
+    realtime_provider: str = "fake"
+    openai_api_key: str = ""
+    openai_realtime_model: str = "gpt-realtime-mini"
 
     @classmethod
     def from_environment(cls) -> Settings:
         token = os.environ.get("EXTERNAL_TRANSPORT_TOKEN", "")
         if not token:
             raise ConfigurationError("EXTERNAL_TRANSPORT_TOKEN must be set")
+        realtime_provider = os.environ.get("REALTIME_PROVIDER", "fake")
+        openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        openai_realtime_model = os.environ.get(
+            "OPENAI_REALTIME_MODEL", "gpt-realtime-mini"
+        )
+        if realtime_provider not in {"fake", "openai_realtime"}:
+            raise ConfigurationError("REALTIME_PROVIDER is not supported")
+        if realtime_provider == "openai_realtime" and not openai_api_key:
+            raise ConfigurationError(
+                "OPENAI_API_KEY must be set for the openai_realtime provider"
+            )
+        if not openai_realtime_model:
+            raise ConfigurationError("OPENAI_REALTIME_MODEL must not be empty")
         try:
             max_sessions = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "2"))
             max_frame = int(os.environ.get("MAX_AUDIO_FRAME_BYTES", "32000"))
@@ -61,4 +77,7 @@ class Settings:
             session_start_timeout,
             input_idle_timeout,
             max_session_seconds,
+            realtime_provider,
+            openai_api_key,
+            openai_realtime_model,
         )
