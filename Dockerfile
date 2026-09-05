@@ -3,15 +3,19 @@ FROM python:3.12.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH=/app/.venv/bin:$PATH
+    PATH=/app/.venv/bin:$PATH \
+    NLTK_DATA=/app/nltk_data
 
 WORKDIR /app
 RUN groupadd --system app && useradd --system --gid app --create-home app
 COPY pyproject.toml README.md ./
 COPY src ./src
+# Pipecat sentence streaming uses punkt_tab. Install it while the image is
+# writable so the production read-only filesystem never attempts a fetch.
 RUN python -m venv .venv \
     && .venv/bin/pip install --no-cache-dir --upgrade pip \
     && .venv/bin/pip install --no-cache-dir '.[realtime,tools]' \
+    && .venv/bin/python -c "import nltk; nltk.download('punkt_tab', download_dir='/app/nltk_data', quiet=True, raise_on_error=True)" \
     && chown -R app:app /app
 
 USER app
