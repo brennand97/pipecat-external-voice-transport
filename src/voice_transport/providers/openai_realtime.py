@@ -5,6 +5,35 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 
+from pipecat.frames.frames import (
+    InputAudioRawFrame,
+    InterruptionFrame,
+    LLMFullResponseEndFrame,
+    LLMFullResponseStartFrame,
+    StartFrame,
+    TextFrame,
+    TTSAudioRawFrame,
+    UserStartedSpeakingFrame,
+)
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import (
+    LLMContextAggregatorPair,
+)
+from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.services.openai.realtime import events as realtime_events
+from pipecat.services.openai.realtime.events import (
+    AudioConfiguration,
+    AudioInput,
+    InputAudioNoiseReduction,
+    InputAudioTranscription,
+    SemanticTurnDetection,
+    SessionProperties,
+)
+from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
+from pipecat.workers.runner import WorkerRunner
+
 from voice_transport.agent.session import AgentEvent, AgentSession
 from voice_transport.tools.pipecat_bridge import PipecatToolBridge
 
@@ -52,6 +81,40 @@ def _ready_openai_service(
             if isinstance(transcript, str) and transcript:
                 await events.put(AgentEvent("user.transcript.final", text=transcript))
 
+        async def _handle_context(self, context) -> None:
+            # In a native realtime conversation, the first context arrives
+            # upstream from the assistant aggregator after OpenAI has already
+            # completed a response. Treat it as a mirror, not a request for an
+            # unsolicited additional response.
+            if self._context is None:
+                self._context = context
+                self._llm_needs_conversation_setup = False
+                await self._process_completed_function_calls(send_new_results=False)
+                return
+            await super()._handle_context(context)
+
+        async def submit_text(self, text: str) -> None:
+            # Audio-first realtime sessions don't receive an LLMContextFrame,
+            # but Pipecat's response helper requires local context bookkeeping.
+            # OpenAI already owns the live conversation, so initialize an empty
+            # mirror without replaying prior server-side items.
+            if self._context is None:
+                self._context = LLMContext([])
+                self._llm_needs_conversation_setup = False
+            self._llm_needs_conversation_setup = False
+            item = realtime_events.ConversationItem(
+                type="message",
+                role="user",
+                content=[realtime_events.ItemContent(type="input_text", text=text)],
+            )
+            self._messages_added_manually[item.id] = True
+            await self.send_client_event(
+                realtime_events.ConversationItemCreateEvent(item=item)
+            )
+            if self._context is not None:
+                self._context.add_message({"role": "user", "content": text})
+            await self._create_response()
+
     return ReadyOpenAIRealtimeService
 
 
@@ -82,31 +145,16 @@ class OpenAIRealtimeAgentSession:
         self._pipeline_ready = asyncio.Event()
         self._provider_ready = asyncio.Event()
         self._source = None
+        self._llm = None
         self._runner = None
         self._runner_task: asyncio.Task[None] | None = None
         self._closed = False
         self._events_finished = False
+        self._pending_text: dict[str, str] = {}
         self._tool_bridge: PipecatToolBridge | None = None
 
     async def start(self) -> None:
-        """Start the same compact pipeline shape used by Pipecat examples."""
-        from pipecat.pipeline.pipeline import Pipeline
-        from pipecat.pipeline.worker import PipelineParams, PipelineWorker
-        from pipecat.processors.aggregators.llm_context import LLMContext
-        from pipecat.processors.aggregators.llm_response_universal import (
-            LLMContextAggregatorPair,
-        )
-        from pipecat.services.openai.realtime.events import (
-            AudioConfiguration,
-            AudioInput,
-            InputAudioNoiseReduction,
-            InputAudioTranscription,
-            SemanticTurnDetection,
-            SessionProperties,
-        )
-        from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
-        from pipecat.workers.runner import WorkerRunner
-
+        """Start the pre-imported compact Pipecat pipeline."""
         self._source = _PipecatPCMSource(
             self._config.input_sample_rate, self._config.input_channels
         )
@@ -137,6 +185,7 @@ class OpenAIRealtimeAgentSession:
                 ),
             ),
         )
+        self._llm = llm
         worker = PipelineWorker(
             Pipeline(
                 [
@@ -164,13 +213,26 @@ class OpenAIRealtimeAgentSession:
             await self.close()
             raise RuntimeError("Pipecat pipeline did not become ready") from None
 
-    async def push_audio(self, pcm: bytes) -> None:
+    async def submit_audio(self, turn_id: str, pcm: bytes) -> None:
         if self._source is None:
             raise RuntimeError("OpenAI Realtime session has not started")
         await self._source.push_audio(pcm)
 
-    async def end_input(self) -> None:
-        """Let provider-side semantic VAD close the user turn."""
+    async def submit_text(self, turn_id: str, text: str) -> None:
+        if self._llm is None:
+            raise RuntimeError("OpenAI Realtime session has not started")
+        self._pending_text[turn_id] = text
+
+    async def end_turn(self, turn_id: str) -> None:
+        """Audio uses provider VAD; dispatch a completed text turn explicitly."""
+        text = self._pending_text.pop(turn_id, None)
+        if text is not None:
+            await self._llm.submit_text(text)
+
+    async def interrupt(self) -> None:
+        if self._source is None:
+            raise RuntimeError("OpenAI Realtime session has not started")
+        await self._source.interrupt()
 
     async def cancel(self) -> None:
         await self._stop_pipeline("external_transport_cancelled")
@@ -210,16 +272,12 @@ class _PipecatPCMSource:
     """Lazy wrapper so Pipecat remains private to the OpenAI provider module."""
 
     def __new__(cls, sample_rate: int, channels: int):
-        from pipecat.processors.frame_processor import FrameProcessor
-
         class PCMSource(FrameProcessor):
             async def process_frame(self, frame, direction) -> None:
                 await super().process_frame(frame, direction)
                 await self.push_frame(frame, direction)
 
             async def push_audio(self, pcm: bytes) -> None:
-                from pipecat.frames.frames import InputAudioRawFrame
-
                 await self.push_frame(
                     InputAudioRawFrame(
                         audio=pcm,
@@ -227,6 +285,9 @@ class _PipecatPCMSource:
                         num_channels=channels,
                     )
                 )
+
+            async def interrupt(self) -> None:
+                await self.push_frame(InterruptionFrame())
 
         return PCMSource(name="external-pcm-source")
 
@@ -239,27 +300,26 @@ class _PipecatEventSink:
         events: asyncio.Queue[AgentEvent | None],
         pipeline_ready: asyncio.Event,
     ):
-        from pipecat.processors.frame_processor import FrameProcessor
-
         class EventSink(FrameProcessor):
             def __init__(self, **kwargs) -> None:
                 super().__init__(**kwargs)
                 self._text_parts: list[str] = []
+                self._response_active = False
 
             async def process_frame(self, frame, direction) -> None:
                 await super().process_frame(frame, direction)
-                from pipecat.frames.frames import (
-                    LLMFullResponseEndFrame,
-                    LLMFullResponseStartFrame,
-                    StartFrame,
-                    TextFrame,
-                    TTSAudioRawFrame,
-                )
-
                 if isinstance(frame, StartFrame):
                     pipeline_ready.set()
+                elif isinstance(frame, UserStartedSpeakingFrame):
+                    await events.put(AgentEvent("user.speech_started"))
+                elif isinstance(frame, InterruptionFrame):
+                    self._response_active = False
+                    self._text_parts = []
                 elif isinstance(frame, LLMFullResponseStartFrame):
-                    await events.put(AgentEvent("assistant.response_started"))
+                    if not self._response_active:
+                        self._response_active = True
+                        self._text_parts = []
+                        await events.put(AgentEvent("assistant.response_started"))
                 elif isinstance(frame, TextFrame):
                     # Realtime can surface the same output transcript through
                     # more than one provider event. Preserve audio unchanged,
@@ -277,6 +337,10 @@ class _PipecatEventSink:
                         )
                     )
                 elif isinstance(frame, LLMFullResponseEndFrame):
+                    if not self._response_active:
+                        await self.push_frame(frame, direction)
+                        return
+                    self._response_active = False
                     if self._text_parts:
                         await events.put(
                             AgentEvent(
@@ -284,7 +348,6 @@ class _PipecatEventSink:
                             )
                         )
                     await events.put(AgentEvent("assistant.response_finished"))
-                    await events.put(None)
                 await self.push_frame(frame, direction)
 
         return EventSink(name="external-event-sink")

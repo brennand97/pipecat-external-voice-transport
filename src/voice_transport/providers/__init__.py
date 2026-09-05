@@ -15,6 +15,12 @@ DEFAULT_SYSTEM_INSTRUCTION = (
 )
 
 
+def prepare_provider(settings: Settings) -> None:
+    """Load the configured provider module during application construction."""
+    if settings.realtime_provider == "openai_realtime":
+        from . import openai_realtime  # noqa: F401
+
+
 def create_agent_session(settings: Settings) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
     config = RealtimeProviderConfig(

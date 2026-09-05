@@ -4,11 +4,11 @@ A network service implementing the provider-neutral Voice Satellite External Tra
 
 ## Status
 
-The service provides authenticated protocol handling, strict v1 validation, bounded ordered PCM ingress, concurrency limits, cancellation, and deterministic fake-agent coverage. Its provider boundary supports `fake` and Pipecat-backed `openai_realtime` with an explicit model. OpenAI readiness is gated on its completed session update; assistant PCM is exposed through a signed, short-lived streaming WAV capability.
+The service provides authenticated protocol handling, strict development-v1 validation, bounded ordered PCM ingress, concurrency limits, and deterministic fake-agent coverage. One persistent provider session accepts correlated audio and text turns. Its provider boundary supports `fake` and Pipecat-backed `openai_realtime` with an explicit model. OpenAI readiness is gated on its completed session update; its module is loaded during application construction rather than on the first turn.
 
-A response can be cancelled while audio is streaming. The server cancels the provider, revokes the active stream, emits `assistant.interrupted`, and finishes the session. Output buffering is bounded; if no client consumes an announced stream, audio is discarded after a bounded wait rather than blocking the provider indefinitely.
+Every response has a server-generated `response_id`. Text input interrupts active output immediately; audio waits for provider/VAD genuine-speech detection. Interruption cancels provider output, revokes the matching signed WAV stream, and emits `assistant.interrupted` without closing the conversation. Output buffering is bounded; unread audio is discarded after a bounded wait.
 
-The live server-to-OpenAI transport path is validated with the bundled PCM fixture, including provider-native final transcription. HA/Kiosk hardware acceptance and multi-turn barge-in remain separate integration work; do not select it for production satellite use yet.
+The live server-to-OpenAI audio and text provider paths are validated, including provider-native final transcription. HA/Kiosk hardware acceptance remains separate integration work; do not select it for production satellite use yet.
 
 ## Local development
 

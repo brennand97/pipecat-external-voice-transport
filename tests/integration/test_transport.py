@@ -67,7 +67,7 @@ async def test_health_and_ready() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transport_lifecycle() -> None:
+async def test_transport_supports_persistent_audio_and_text_turns() -> None:
     async with running_server(Settings("token")) as (base_url, _app):
         ws_url = base_url.replace("http", "ws", 1) + "/transport/v1"
         async with connect(
@@ -76,50 +76,58 @@ async def test_transport_lifecycle() -> None:
             open_timeout=_TIMEOUT_SECONDS,
             close_timeout=_TIMEOUT_SECONDS,
         ) as websocket:
-            await asyncio.wait_for(
-                websocket.send(json.dumps(start())), _TIMEOUT_SECONDS
+            await websocket.send(json.dumps(start()))
+            assert json.loads(await websocket.recv())["type"] == "session.ready"
+            await websocket.send(
+                '{"type":"turn.start","turn_id":"audio-1","input":"audio"}'
             )
-            assert (
-                json.loads(await asyncio.wait_for(websocket.recv(), _TIMEOUT_SECONDS))[
-                    "type"
-                ]
-                == "session.ready"
-            )
-            await asyncio.wait_for(websocket.send(b"\x00\x00"), _TIMEOUT_SECONDS)
-            await asyncio.wait_for(
-                websocket.send('{"type":"input.end"}'), _TIMEOUT_SECONDS
-            )
-            for expected in (
+            await websocket.send(b"\x00\x00")
+            await websocket.send('{"type":"turn.end","turn_id":"audio-1"}')
+            first = [json.loads(await websocket.recv()) for _ in range(3)]
+            assert [event["type"] for event in first] == [
                 "assistant.response_started",
                 "assistant.text.final",
                 "assistant.response_finished",
-                "session.finished",
-            ):
-                assert (
-                    json.loads(
-                        await asyncio.wait_for(websocket.recv(), _TIMEOUT_SECONDS)
-                    )["type"]
-                    == expected
-                )
+            ]
+            assert {event["turn_id"] for event in first} == {"audio-1"}
+            assert len({event["response_id"] for event in first}) == 1
+
+            await websocket.send(
+                '{"type":"turn.start","turn_id":"text-2","input":"text"}'
+            )
+            await websocket.send(
+                '{"type":"input.text","turn_id":"text-2","text":"hello"}'
+            )
+            transcript = json.loads(await websocket.recv())
+            assert transcript["source"] == "client_text"
+            assert transcript["text"] == "hello"
+            await websocket.send('{"type":"turn.end","turn_id":"text-2"}')
+            second = [json.loads(await websocket.recv()) for _ in range(3)]
+            assert {event["turn_id"] for event in second} == {"text-2"}
+            await websocket.send('{"type":"session.cancel"}')
+            assert json.loads(await websocket.recv())["type"] == "session.finished"
 
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
-async def test_session_cancel_interrupts_and_revokes_active_audio(
+async def test_response_cancel_is_nonterminal_and_revokes_active_audio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class StreamingAgent:
         def __init__(self) -> None:
             self.events_queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
             self.cancelled = False
+            self.interrupted = False
 
         async def start(self) -> None:
             pass
 
-        async def push_audio(self, pcm: bytes) -> None:
+        async def submit_audio(self, turn_id: str, pcm: bytes) -> None:
             pass
 
-        async def end_input(self) -> None:
+        async def submit_text(self, turn_id: str, text: str) -> None:
+            pass
+
+        async def end_turn(self, turn_id: str) -> None:
             await self.events_queue.put(AgentEvent("assistant.response_started"))
             await self.events_queue.put(
                 AgentEvent(
@@ -130,12 +138,16 @@ async def test_session_cancel_interrupts_and_revokes_active_audio(
                 )
             )
 
+        async def interrupt(self) -> None:
+            self.interrupted = True
+
         async def cancel(self) -> None:
-            self.cancelled = True
-            await self.events_queue.put(None)
+            await self.close()
 
         async def close(self) -> None:
-            pass
+            if not self.cancelled:
+                self.cancelled = True
+                await self.events_queue.put(None)
 
         async def events(self):
             while event := await self.events_queue.get():
@@ -153,21 +165,57 @@ async def test_session_cancel_interrupts_and_revokes_active_audio(
         ) as websocket:
             await websocket.send(json.dumps(start()))
             assert json.loads(await websocket.recv())["type"] == "session.ready"
+            await websocket.send(
+                '{"type":"turn.start","turn_id":"audio-1","input":"audio"}'
+            )
             await websocket.send(b"\x00\x00")
-            await websocket.send('{"type":"input.end"}')
+            await websocket.send('{"type":"turn.end","turn_id":"audio-1"}')
+            started = json.loads(await websocket.recv())
+            assert started["type"] == "assistant.response_started"
+            audio = json.loads(await websocket.recv())
+            assert audio["type"] == "assistant.audio"
+            await websocket.send(
+                json.dumps(
+                    {
+                        "type": "response.cancel",
+                        "response_id": audio["response_id"],
+                    }
+                )
+            )
+            assert json.loads(await websocket.recv())["type"] == "assistant.interrupted"
+            assert agent.interrupted
+            await websocket.send(
+                '{"type":"turn.start","turn_id":"text-2","input":"text"}'
+            )
+            await websocket.send(
+                '{"type":"input.text","turn_id":"text-2","text":"next"}'
+            )
+            assert json.loads(await websocket.recv())["source"] == "client_text"
+            await websocket.send('{"type":"turn.end","turn_id":"text-2"}')
             assert (
                 json.loads(await websocket.recv())["type"]
                 == "assistant.response_started"
             )
-            audio = json.loads(await websocket.recv())
-            assert audio["type"] == "assistant.audio"
+            second_audio = json.loads(await websocket.recv())
+            assert second_audio["type"] == "assistant.audio"
+            await websocket.send(
+                '{"type":"turn.start","turn_id":"text-3","input":"text"}'
+            )
+            interrupted = json.loads(await websocket.recv())
+            assert interrupted["type"] == "assistant.interrupted"
+            assert interrupted["response_id"] == second_audio["response_id"]
+            await websocket.send(
+                '{"type":"input.text","turn_id":"text-3","text":"replacement"}'
+            )
+            assert json.loads(await websocket.recv())["source"] == "client_text"
             await websocket.send('{"type":"session.cancel"}')
-            assert json.loads(await websocket.recv())["type"] == "assistant.interrupted"
             assert json.loads(await websocket.recv())["type"] == "session.finished"
         assert agent.cancelled
         async with httpx.AsyncClient() as client:
             revoked = await client.get(audio["url"])
+            text_interrupted = await client.get(second_audio["url"])
         assert revoked.status_code == 404
+        assert text_interrupted.status_code == 404
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,36 @@ class SessionStart:
     wake_word: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class TurnStart:
+    turn_id: str
+    input_type: str
+
+
+def parse_turn_start(message: dict[str, Any]) -> TurnStart:
+    if message.get("type") != "turn.start":
+        raise ProtocolViolation("invalid_message", "Expected turn.start.")
+    turn_id = _required_string(message, "turn_id")
+    input_type = message.get("input")
+    if input_type not in {"audio", "text"}:
+        raise ProtocolViolation(
+            "invalid_message", "turn.start input must be audio or text."
+        )
+    return TurnStart(turn_id, input_type)
+
+
+def parse_input_text(message: dict[str, Any]) -> tuple[str, str]:
+    if message.get("type") != "input.text":
+        raise ProtocolViolation("invalid_message", "Expected input.text.")
+    turn_id = _required_string(message, "turn_id")
+    text = _required_string(message, "text")
+    if len(text.encode()) > 4_000:
+        raise ProtocolViolation(
+            "input_text_too_large", "Text input exceeds 4,000 bytes."
+        )
+    return turn_id, text
+
+
 def parse_json_message(payload: str) -> dict[str, Any]:
     import json
 
@@ -88,12 +118,21 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
 
 def validate_control(message: dict[str, Any]) -> str:
     message_type = message["type"]
-    if message_type not in {"input.end", "session.cancel"}:
+    if message_type not in {
+        "input.end",
+        "turn.end",
+        "response.cancel",
+        "session.cancel",
+    }:
         raise ProtocolViolation(
             "unsupported_message_type", f"Unsupported message type: {message_type}."
         )
+    if message_type in {"turn.end", "response.cancel"}:
+        _required_string(
+            message, "turn_id" if message_type == "turn.end" else "response_id"
+        )
     if (
-        message_type == "session.cancel"
+        message_type in {"response.cancel", "session.cancel"}
         and "reason" in message
         and not isinstance(message["reason"], str)
     ):
@@ -108,10 +147,11 @@ def ready_message(session_id: str) -> dict[str, Any]:
         "type": "session.ready",
         "session_id": session_id,
         "capabilities": {
-            "transcription": False,
-            "streaming_audio_url": False,
-            "interruptions": False,
-            "conversation_continuation": False,
+            "transcription": True,
+            "text_input": True,
+            "streaming_audio_url": True,
+            "interruptions": True,
+            "conversation_continuation": True,
         },
     }
 
