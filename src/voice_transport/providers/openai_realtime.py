@@ -34,13 +34,23 @@ def _consume_task_result(task: asyncio.Task) -> None:
         pass
 
 
-def _ready_openai_service(service_class, ready_event: asyncio.Event):
-    """Create a provider-local service that signals session.update completion."""
+def _ready_openai_service(
+    service_class,
+    ready_event: asyncio.Event,
+    events: asyncio.Queue[AgentEvent | None],
+):
+    """Create a provider-local service with explicit readiness/transcripts."""
 
     class ReadyOpenAIRealtimeService(service_class):
         async def _handle_evt_session_updated(self, event):
             await super()._handle_evt_session_updated(event)
             ready_event.set()
+
+        async def handle_evt_input_audio_transcription_completed(self, event):
+            await super().handle_evt_input_audio_transcription_completed(event)
+            transcript = getattr(event, "transcript", None)
+            if isinstance(transcript, str) and transcript:
+                await events.put(AgentEvent("user.transcript.final", text=transcript))
 
     return ReadyOpenAIRealtimeService
 
@@ -85,7 +95,6 @@ class OpenAIRealtimeAgentSession:
         from pipecat.processors.aggregators.llm_context import LLMContext
         from pipecat.processors.aggregators.llm_response_universal import (
             LLMContextAggregatorPair,
-            UserTurnMessageAddedMessage,
         )
         from pipecat.services.openai.realtime.events import (
             AudioConfiguration,
@@ -108,19 +117,9 @@ class OpenAIRealtimeAgentSession:
         context = LLMContext([], tools=tool_schemas)
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
 
-        @user_aggregator.event_handler("on_user_turn_message_added")
-        async def on_user_turn_message_added(
-            _aggregator, message: UserTurnMessageAddedMessage
-        ) -> None:
-            # Realtime providers finalize input transcription at the response
-            # boundary; emit the provider's finalized text without local STT.
-            await self._events.put(
-                AgentEvent("user.transcript.final", text=message.content)
-            )
-
         sink = _PipecatEventSink(self._events, self._pipeline_ready)
         ready_service_class = _ready_openai_service(
-            OpenAIRealtimeLLMService, self._provider_ready
+            OpenAIRealtimeLLMService, self._provider_ready, self._events
         )
         llm = ready_service_class(
             api_key=self._api_key,
@@ -254,7 +253,6 @@ class _PipecatEventSink:
                     LLMFullResponseStartFrame,
                     StartFrame,
                     TextFrame,
-                    TranscriptionFrame,
                     TTSAudioRawFrame,
                 )
 
@@ -278,8 +276,6 @@ class _PipecatEventSink:
                             channels=frame.num_channels,
                         )
                     )
-                elif isinstance(frame, TranscriptionFrame) and frame.finalized:
-                    await events.put(AgentEvent("user.transcript.final", frame.text))
                 elif isinstance(frame, LLMFullResponseEndFrame):
                     if self._text_parts:
                         await events.put(

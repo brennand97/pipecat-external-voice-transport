@@ -9,6 +9,7 @@ from voice_transport.providers.openai_realtime import (
 
 async def test_provider_ready_gate_follows_session_update() -> None:
     ready = asyncio.Event()
+    events: asyncio.Queue = asyncio.Queue()
 
     class Service:
         def __init__(self) -> None:
@@ -17,11 +18,33 @@ async def test_provider_ready_gate_follows_session_update() -> None:
         async def _handle_evt_session_updated(self, event) -> None:
             self.updated = event == "updated"
 
-    service = _ready_openai_service(Service, ready)()
+        async def handle_evt_input_audio_transcription_completed(self, event) -> None:
+            pass
+
+    service = _ready_openai_service(Service, ready, events)()
     await service._handle_evt_session_updated("updated")
 
     assert service.updated
     assert ready.is_set()
+
+
+async def test_provider_emits_only_native_final_transcripts() -> None:
+    events: asyncio.Queue = asyncio.Queue()
+
+    class Service:
+        async def _handle_evt_session_updated(self, event) -> None:
+            pass
+
+        async def handle_evt_input_audio_transcription_completed(self, event) -> None:
+            self.event = event
+
+    event = type("Transcription", (), {"transcript": "Hello there"})()
+    service = _ready_openai_service(Service, asyncio.Event(), events)()
+    await service.handle_evt_input_audio_transcription_completed(event)
+
+    transcript = await events.get()
+    assert transcript.type == "user.transcript.final"
+    assert transcript.text == "Hello there"
 
 
 async def test_provider_cancellation_is_bounded() -> None:

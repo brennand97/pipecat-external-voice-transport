@@ -8,7 +8,7 @@ The service provides authenticated protocol handling, strict v1 validation, boun
 
 A response can be cancelled while audio is streaming. The server cancels the provider, revokes the active stream, emits `assistant.interrupted`, and finishes the session. Output buffering is bounded; if no client consumes an announced stream, audio is discarded after a bounded wait rather than blocking the provider indefinitely.
 
-The live server-to-OpenAI transport path is validated with the bundled PCM fixture. HA/Kiosk hardware acceptance, provider-native transcript consistency, and multi-turn barge-in remain separate integration work; do not select it for production satellite use yet.
+The live server-to-OpenAI transport path is validated with the bundled PCM fixture, including provider-native final transcription. HA/Kiosk hardware acceptance and multi-turn barge-in remain separate integration work; do not select it for production satellite use yet.
 
 ## Local development
 
