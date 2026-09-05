@@ -24,6 +24,7 @@ class MCPServerConfig:
     env: dict[str, str] | None = None
     request_timeout_seconds: float = 15.0
     max_concurrent_calls: int = 2
+    allowed_tools: frozenset[str] = frozenset()
 
 
 @dataclass(slots=True)
@@ -50,9 +51,15 @@ class MCPToolProvider:
         return [
             ToolDefinition(tool.name, tool.description or "", tool.inputSchema)
             for tool in result.tools
+            if tool.name in self.config.allowed_tools
         ]
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+        if name not in self.config.allowed_tools:
+            return ToolResult(
+                content=[{"type": "text", "text": f"Tool is not allowed: {name}"}],
+                is_error=True,
+            )
         session = await self._session_or_connect()
         async with self._calls:
             result = await asyncio.wait_for(

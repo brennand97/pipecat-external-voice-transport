@@ -27,6 +27,7 @@ class AudioStream:
     sample_rate: int
     channels: int
     _queue: asyncio.Queue[bytes | object]
+    _write_timeout_seconds: float
     _closed: bool = False
     _revoked: bool = False
 
@@ -35,7 +36,12 @@ class AudioStream:
             raise AudioAccessError("audio stream is closed")
         if not pcm or len(pcm) % 2:
             raise ValueError("audio chunks must be non-empty PCM16")
-        await self._queue.put(pcm)
+        try:
+            await asyncio.wait_for(
+                self._queue.put(pcm), timeout=self._write_timeout_seconds
+            )
+        except TimeoutError as err:
+            raise AudioAccessError("audio stream consumer is not keeping up") from err
 
     async def close(self) -> None:
         if self._closed:
@@ -75,17 +81,21 @@ class AudioStreamStore:
     signing_key: bytes
     token_ttl_seconds: int = 60
     max_buffered_chunks: int = 64
+    write_timeout_seconds: float = 1.0
     _streams: dict[str, AudioStream] = field(default_factory=dict)
 
     def create(self, sample_rate: int, channels: int = 1) -> tuple[AudioStream, str]:
         if sample_rate < 8_000 or channels < 1:
             raise ValueError("unsupported output audio format")
+        if self.max_buffered_chunks < 1 or self.write_timeout_seconds <= 0:
+            raise ValueError("audio stream limits must be positive")
         stream_id = secrets.token_urlsafe(18)
         stream = AudioStream(
             stream_id,
             sample_rate,
             channels,
             asyncio.Queue(maxsize=self.max_buffered_chunks),
+            self.write_timeout_seconds,
         )
         self._streams[stream_id] = stream
         expiry = int(time.time()) + self.token_ttl_seconds

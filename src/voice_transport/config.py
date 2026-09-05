@@ -27,6 +27,10 @@ class Settings:
     openai_realtime_model: str = "gpt-realtime-mini"
     public_base_url: str = ""
     audio_url_signing_key: str = ""
+    audio_url_token_ttl_seconds: int = 60
+    max_buffered_output_chunks: int = 64
+    audio_stream_write_timeout_seconds: float = 1.0
+    trusted_tool_config_path: str = ""
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -48,6 +52,7 @@ class Settings:
             raise ConfigurationError("OPENAI_REALTIME_MODEL must not be empty")
         public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
         audio_url_signing_key = os.environ.get("AUDIO_URL_SIGNING_KEY", "")
+        trusted_tool_config_path = os.environ.get("TRUSTED_TOOL_CONFIG_PATH", "")
         if realtime_provider == "openai_realtime" and (
             not public_base_url or not audio_url_signing_key
         ):
@@ -67,6 +72,13 @@ class Settings:
                 os.environ.get("INPUT_IDLE_TIMEOUT_SECONDS", "20")
             )
             max_session_seconds = float(os.environ.get("MAX_SESSION_SECONDS", "300"))
+            audio_token_ttl = int(os.environ.get("AUDIO_URL_TOKEN_TTL_SECONDS", "60"))
+            max_buffered_output_chunks = int(
+                os.environ.get("MAX_BUFFERED_OUTPUT_CHUNKS", "64")
+            )
+            audio_stream_write_timeout = float(
+                os.environ.get("AUDIO_STREAM_WRITE_TIMEOUT_SECONDS", "1")
+            )
         except ValueError as err:
             raise ConfigurationError("transport limits must be numeric") from err
         if (
@@ -77,6 +89,9 @@ class Settings:
             or session_start_timeout <= 0
             or input_idle_timeout <= 0
             or max_session_seconds <= 0
+            or audio_token_ttl <= 0
+            or max_buffered_output_chunks < 1
+            or audio_stream_write_timeout <= 0
         ):
             raise ConfigurationError("transport limits are outside safe bounds")
         return cls(
@@ -93,4 +108,8 @@ class Settings:
             openai_realtime_model,
             public_base_url,
             audio_url_signing_key,
+            audio_token_ttl,
+            max_buffered_output_chunks,
+            audio_stream_write_timeout,
+            trusted_tool_config_path,
         )

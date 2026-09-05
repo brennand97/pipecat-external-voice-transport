@@ -42,6 +42,21 @@ async def _expire_audio_stream(audio_store: AudioStreamStore, stream_id: str) ->
     await audio_store.revoke(stream_id)
 
 
+async def _cancel_task(task: asyncio.Task[object], timeout: float = 3.0) -> None:
+    """Cancel a local task without allowing shutdown to block indefinitely."""
+    if task.done():
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return
+    task.cancel()
+    try:
+        await asyncio.wait_for(task, timeout=timeout)
+    except asyncio.CancelledError:
+        pass
+
+
 def _is_authorized(websocket: WebSocket, expected_token: str) -> bool:
     header = websocket.headers.get("authorization", "")
     scheme, _, supplied = header.partition(" ")
@@ -63,7 +78,12 @@ def create_app(settings: Settings) -> FastAPI:
         if settings.audio_url_signing_key
         else secrets.token_bytes(32)
     )
-    audio_store = AudioStreamStore(signing_key)
+    audio_store = AudioStreamStore(
+        signing_key,
+        token_ttl_seconds=settings.audio_url_token_ttl_seconds,
+        max_buffered_chunks=settings.max_buffered_output_chunks,
+        write_timeout_seconds=settings.audio_stream_write_timeout_seconds,
+    )
     app.state.settings = settings
     app.state.audio_store = audio_store
     app.state.registry = registry
@@ -107,7 +127,10 @@ def create_app(settings: Settings) -> FastAPI:
         drain_task = None
         output_stream: AudioStream | None = None
         output_expiry_task: asyncio.Task[None] | None = None
+        event_task: asyncio.Task[None] | None = None
+        receive_task: asyncio.Task[object] | None = None
         retain_output = False
+        output_disabled = False
         try:
             try:
                 first = await asyncio.wait_for(
@@ -137,6 +160,57 @@ def create_app(settings: Settings) -> FastAPI:
             drain_task = asyncio.create_task(_drain_pcm(input_pcm))
             await websocket.send_json(ready_message(start.session_id))
             session_started_at = time.monotonic()
+            response_started = False
+
+            async def emit_agent_events() -> None:
+                nonlocal output_disabled, output_stream, response_started
+                async for event in agent.events():
+                    if event.type == "assistant.audio.chunk":
+                        if output_disabled:
+                            continue
+                        if output_stream is None:
+                            if not event.sample_rate or not event.channels:
+                                raise ProtocolViolation(
+                                    "invalid_provider_audio",
+                                    "Provider returned audio without a format.",
+                                )
+                            output_stream, token = audio_store.create(
+                                event.sample_rate, event.channels
+                            )
+                            base_url = settings.public_base_url or str(
+                                websocket.base_url
+                            ).rstrip("/")
+                            await websocket.send_json(
+                                {
+                                    "type": "assistant.audio",
+                                    "session_id": session.start.session_id,
+                                    "url": (
+                                        f"{base_url}/audio/v1/{output_stream.stream_id}"
+                                        f"?token={token}"
+                                    ),
+                                    "content_type": "audio/wav",
+                                }
+                            )
+                        try:
+                            await output_stream.write(event.audio or b"")
+                        except AudioAccessError:
+                            # A client that never opens the signed stream must
+                            # not block provider output or retain audio forever.
+                            await audio_store.revoke(output_stream.stream_id)
+                            output_stream = None
+                            output_disabled = True
+                        continue
+                    if event.type == "assistant.response_started":
+                        response_started = True
+                    response = {
+                        "type": event.type,
+                        "session_id": session.start.session_id,
+                    }
+                    if event.text is not None:
+                        response["text"] = event.text
+                    await websocket.send_json(response)
+                    if event.type == "assistant.response_finished" and output_stream:
+                        await output_stream.close()
 
             while True:
                 remaining = settings.max_session_seconds - (
@@ -193,53 +267,67 @@ def create_app(settings: Settings) -> FastAPI:
                 await input_pcm.close()
                 await drain_task
                 await agent.end_input()
-                async for event in agent.events():
-                    if event.type == "assistant.audio.chunk":
-                        if output_stream is None:
-                            if not event.sample_rate or not event.channels:
-                                raise ProtocolViolation(
-                                    "invalid_provider_audio",
-                                    "Provider returned audio without a format.",
-                                )
-                            output_stream, token = audio_store.create(
-                                event.sample_rate, event.channels
-                            )
-                            base_url = settings.public_base_url or str(
-                                websocket.base_url
-                            ).rstrip("/")
-                            audio_url = (
-                                f"{base_url}/audio/v1/{output_stream.stream_id}"
-                                f"?token={token}"
-                            )
-                            await websocket.send_json(
-                                {
-                                    "type": "assistant.audio",
-                                    "session_id": session.start.session_id,
-                                    "url": audio_url,
-                                    "content_type": "audio/wav",
-                                }
-                            )
-                        await output_stream.write(event.audio or b"")
-                        continue
-                    response = {
-                        "type": event.type,
-                        "session_id": session.start.session_id,
-                    }
-                    if event.text is not None:
-                        response["text"] = event.text
-                    await websocket.send_json(response)
-                    if event.type == "assistant.response_finished" and output_stream:
-                        await output_stream.close()
-                if output_stream is not None:
-                    retain_output = True
-                    output_expiry_task = asyncio.create_task(
-                        _expire_audio_stream(audio_store, output_stream.stream_id)
+                event_task = asyncio.create_task(emit_agent_events())
+                receive_task = asyncio.create_task(websocket.receive())
+                while True:
+                    done, _pending = await asyncio.wait(
+                        {event_task, receive_task},
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
-                session.finish()
-                await websocket.send_json(
-                    {"type": "session.finished", "session_id": session.start.session_id}
-                )
-                return
+                    if event_task in done:
+                        await event_task
+                        await _cancel_task(receive_task)
+                        if output_stream is not None:
+                            retain_output = True
+                            output_expiry_task = asyncio.create_task(
+                                _expire_audio_stream(
+                                    audio_store, output_stream.stream_id
+                                )
+                            )
+                        session.finish()
+                        await websocket.send_json(
+                            {
+                                "type": "session.finished",
+                                "session_id": session.start.session_id,
+                            }
+                        )
+                        return
+                    received = receive_task.result()
+                    if received.get("type") == "websocket.disconnect":
+                        await agent.cancel()
+                        await _cancel_task(event_task)
+                        return
+                    if received.get("text") is None:
+                        raise ProtocolViolation(
+                            "invalid_state",
+                            "Only session.cancel is accepted while responding.",
+                        )
+                    control = validate_control(parse_json_message(received["text"]))
+                    if control != "session.cancel":
+                        raise ProtocolViolation(
+                            "invalid_state",
+                            "Only session.cancel is accepted while responding.",
+                        )
+                    session.cancel()
+                    await agent.cancel()
+                    await _cancel_task(event_task)
+                    if output_stream is not None:
+                        await audio_store.revoke(output_stream.stream_id)
+                    if response_started:
+                        await websocket.send_json(
+                            {
+                                "type": "assistant.interrupted",
+                                "session_id": session.start.session_id,
+                            }
+                        )
+                    session.finish()
+                    await websocket.send_json(
+                        {
+                            "type": "session.finished",
+                            "session_id": session.start.session_id,
+                        }
+                    )
+                    return
         except WebSocketDisconnect:
             return
         except ProtocolViolation as err:
@@ -250,6 +338,10 @@ def create_app(settings: Settings) -> FastAPI:
             )
             await websocket.close(code=status.WS_1002_PROTOCOL_ERROR)
         finally:
+            if receive_task is not None:
+                await _cancel_task(receive_task)
+            if event_task is not None:
+                await _cancel_task(event_task)
             if input_pcm is not None:
                 await input_pcm.close()
             if output_stream is not None and not retain_output:

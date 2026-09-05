@@ -34,6 +34,17 @@ def _consume_task_result(task: asyncio.Task) -> None:
         pass
 
 
+def _ready_openai_service(service_class, ready_event: asyncio.Event):
+    """Create a provider-local service that signals session.update completion."""
+
+    class ReadyOpenAIRealtimeService(service_class):
+        async def _handle_evt_session_updated(self, event):
+            await super()._handle_evt_session_updated(event)
+            ready_event.set()
+
+    return ReadyOpenAIRealtimeService
+
+
 class OpenAIRealtimeProvider:
     """Create Pipecat-backed sessions for OpenAI's Realtime API."""
 
@@ -59,6 +70,7 @@ class OpenAIRealtimeAgentSession:
         self._config = config
         self._events: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
         self._pipeline_ready = asyncio.Event()
+        self._provider_ready = asyncio.Event()
         self._source = None
         self._runner = None
         self._runner_task: asyncio.Task[None] | None = None
@@ -68,7 +80,6 @@ class OpenAIRealtimeAgentSession:
 
     async def start(self) -> None:
         """Start the same compact pipeline shape used by Pipecat examples."""
-        from pipecat.frames.frames import LLMRunFrame
         from pipecat.pipeline.pipeline import Pipeline
         from pipecat.pipeline.worker import PipelineParams, PipelineWorker
         from pipecat.processors.aggregators.llm_context import LLMContext
@@ -108,7 +119,10 @@ class OpenAIRealtimeAgentSession:
             )
 
         sink = _PipecatEventSink(self._events, self._pipeline_ready)
-        llm = OpenAIRealtimeLLMService(
+        ready_service_class = _ready_openai_service(
+            OpenAIRealtimeLLMService, self._provider_ready
+        )
+        llm = ready_service_class(
             api_key=self._api_key,
             settings=OpenAIRealtimeLLMService.Settings(
                 model=self._model,
@@ -139,10 +153,14 @@ class OpenAIRealtimeAgentSession:
         )
         self._runner = WorkerRunner(handle_sigint=False, handle_sigterm=False)
         await self._runner.add_workers(worker)
-        await worker.queue_frame(LLMRunFrame())
         self._runner_task = asyncio.create_task(self._runner.run(auto_end=False))
         try:
-            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=10)
+            await asyncio.wait_for(
+                asyncio.gather(
+                    self._pipeline_ready.wait(), self._provider_ready.wait()
+                ),
+                timeout=10,
+            )
         except TimeoutError:
             await self.close()
             raise RuntimeError("Pipecat pipeline did not become ready") from None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from voice_transport.agent.session import AgentSession
 from voice_transport.config import Settings
+from voice_transport.tools.config import create_tool_registry
 
 from .base import RealtimeProvider, RealtimeProviderConfig
 from .fake import FakeRealtimeProvider
@@ -16,7 +17,10 @@ DEFAULT_SYSTEM_INSTRUCTION = (
 
 def create_agent_session(settings: Settings) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
-    config = RealtimeProviderConfig(system_instruction=DEFAULT_SYSTEM_INSTRUCTION)
+    config = RealtimeProviderConfig(
+        system_instruction=DEFAULT_SYSTEM_INSTRUCTION,
+        tool_registry=create_tool_registry(settings.trusted_tool_config_path),
+    )
     provider: RealtimeProvider
     if settings.realtime_provider == "fake":
         provider = FakeRealtimeProvider()
