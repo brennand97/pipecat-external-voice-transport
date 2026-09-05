@@ -11,7 +11,7 @@ The service currently provides an authenticated protocol skeleton with health/re
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -e '.[realtime,dev]'
+pip install -e '.[realtime,tools,dev]'
 pytest
 ruff check .
 EXTERNAL_TRANSPORT_TOKEN=development-token \

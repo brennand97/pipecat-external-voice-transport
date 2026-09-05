@@ -11,7 +11,7 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 RUN python -m venv .venv \
     && .venv/bin/pip install --no-cache-dir --upgrade pip \
-    && .venv/bin/pip install --no-cache-dir '.[realtime]' \
+    && .venv/bin/pip install --no-cache-dir '.[realtime,tools]' \
     && chown -R app:app /app
 
 USER app

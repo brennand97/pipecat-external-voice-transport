@@ -19,7 +19,7 @@ jobs:
           python-version: "3.13"
           cache: pip
       - run: python -m pip install --upgrade pip
-      - run: python -m pip install -e '.[realtime,dev]'
+      - run: python -m pip install -e '.[realtime,tools,dev]'
       - run: ruff check .
       - run: pytest
       - run: docker build --tag pipecat-external-voice-transport:test .
