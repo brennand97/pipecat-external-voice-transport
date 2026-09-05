@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from voice_transport.agent.session import AgentSession
+from voice_transport.tools.registry import ToolRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +16,7 @@ class RealtimeProviderConfig:
     system_instruction: str
     input_sample_rate: int = 16_000
     input_channels: int = 1
+    tool_registry: ToolRegistry | None = None
 
 
 class RealtimeProvider(Protocol):

@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 from voice_transport.agent.session import AgentEvent, AgentSession
+from voice_transport.tools.pipecat_bridge import PipecatToolBridge
 
 from .base import RealtimeProviderConfig
 
@@ -62,12 +63,17 @@ class OpenAIRealtimeAgentSession:
         self._runner_task: asyncio.Task[None] | None = None
         self._closed = False
         self._events_finished = False
+        self._tool_bridge: PipecatToolBridge | None = None
 
     async def start(self) -> None:
         """Start the same compact pipeline shape used by Pipecat examples."""
         from pipecat.frames.frames import LLMRunFrame
         from pipecat.pipeline.pipeline import Pipeline
         from pipecat.pipeline.worker import PipelineParams, PipelineWorker
+        from pipecat.processors.aggregators.llm_context import LLMContext
+        from pipecat.processors.aggregators.llm_response_universal import (
+            LLMContextAggregatorPair,
+        )
         from pipecat.services.openai.realtime.events import (
             AudioConfiguration,
             AudioInput,
@@ -82,6 +88,12 @@ class OpenAIRealtimeAgentSession:
         self._source = _PipecatPCMSource(
             self._config.input_sample_rate, self._config.input_channels
         )
+        tool_schemas = []
+        if self._config.tool_registry is not None:
+            self._tool_bridge = PipecatToolBridge(self._config.tool_registry)
+            tool_schemas = await self._tool_bridge.function_schemas()
+        context = LLMContext([], tools=tool_schemas)
+        user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
         sink = _PipecatEventSink(self._events)
         llm = OpenAIRealtimeLLMService(
             api_key=self._api_key,
@@ -100,7 +112,15 @@ class OpenAIRealtimeAgentSession:
             ),
         )
         worker = PipelineWorker(
-            Pipeline([self._source, llm, sink]),
+            Pipeline(
+                [
+                    self._source,
+                    user_aggregator,
+                    llm,
+                    sink,
+                    assistant_aggregator,
+                ]
+            ),
             idle_timeout_secs=300,
             params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
         )
@@ -119,12 +139,16 @@ class OpenAIRealtimeAgentSession:
 
     async def cancel(self) -> None:
         await self._stop_pipeline("external_transport_cancelled")
+        if self._tool_bridge is not None:
+            await self._tool_bridge.close()
         await self._finish_events()
 
     async def close(self) -> None:
         if self._closed:
             return
         await self._stop_pipeline("external_transport_closed")
+        if self._tool_bridge is not None:
+            await self._tool_bridge.close()
         await self._finish_events()
 
     async def _stop_pipeline(self, reason: str) -> None:
