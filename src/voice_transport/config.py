@@ -25,6 +25,8 @@ class Settings:
     realtime_provider: str = "fake"
     openai_api_key: str = ""
     openai_realtime_model: str = "gpt-realtime-mini"
+    public_base_url: str = ""
+    audio_url_signing_key: str = ""
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -44,6 +46,15 @@ class Settings:
             )
         if not openai_realtime_model:
             raise ConfigurationError("OPENAI_REALTIME_MODEL must not be empty")
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        audio_url_signing_key = os.environ.get("AUDIO_URL_SIGNING_KEY", "")
+        if realtime_provider == "openai_realtime" and (
+            not public_base_url or not audio_url_signing_key
+        ):
+            raise ConfigurationError(
+                "PUBLIC_BASE_URL and AUDIO_URL_SIGNING_KEY must be set "
+                "for openai_realtime"
+            )
         try:
             max_sessions = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "2"))
             max_frame = int(os.environ.get("MAX_AUDIO_FRAME_BYTES", "32000"))
@@ -80,4 +91,6 @@ class Settings:
             realtime_provider,
             openai_api_key,
             openai_realtime_model,
+            public_base_url,
+            audio_url_signing_key,
         )

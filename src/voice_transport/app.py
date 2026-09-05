@@ -6,10 +6,11 @@ import asyncio
 import secrets
 import time
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from .audio_input import PCMInput
+from .audio_output import AudioAccessError, AudioStream, AudioStreamStore
 from .config import Settings
 from .protocol import (
     ProtocolViolation,
@@ -35,6 +36,12 @@ async def _drain_pcm(input_pcm: PCMInput) -> None:
         pass
 
 
+async def _expire_audio_stream(audio_store: AudioStreamStore, stream_id: str) -> None:
+    """Invalidate closed output after its short-lived signed URL expires."""
+    await asyncio.sleep(audio_store.token_ttl_seconds)
+    await audio_store.revoke(stream_id)
+
+
 def _is_authorized(websocket: WebSocket, expected_token: str) -> bool:
     header = websocket.headers.get("authorization", "")
     scheme, _, supplied = header.partition(" ")
@@ -51,7 +58,14 @@ def create_app(settings: Settings) -> FastAPI:
         title="Pipecat External Voice Transport", docs_url=None, redoc_url=None
     )
     registry = SessionRegistry(settings.max_concurrent_sessions)
+    signing_key = (
+        settings.audio_url_signing_key.encode()
+        if settings.audio_url_signing_key
+        else secrets.token_bytes(32)
+    )
+    audio_store = AudioStreamStore(signing_key)
     app.state.settings = settings
+    app.state.audio_store = audio_store
     app.state.registry = registry
     app.state.ready = True
 
@@ -67,6 +81,20 @@ def create_app(settings: Settings) -> FastAPI:
             {"status": "not_ready"}, status_code=status.HTTP_503_SERVICE_UNAVAILABLE
         )
 
+    @app.get("/audio/v1/{stream_id}")
+    async def stream_audio(stream_id: str, token: str) -> StreamingResponse:
+        try:
+            stream = audio_store.open(stream_id, token)
+        except AudioAccessError as err:
+            raise HTTPException(
+                status_code=404, detail="audio stream unavailable"
+            ) from err
+        return StreamingResponse(
+            stream.wav_chunks(),
+            media_type="audio/wav",
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.websocket("/transport/v1")
     async def transport(websocket: WebSocket) -> None:
         if not _is_authorized(websocket, settings.transport_token):
@@ -77,6 +105,9 @@ def create_app(settings: Settings) -> FastAPI:
         input_pcm: PCMInput | None = None
         agent = None
         drain_task = None
+        output_stream: AudioStream | None = None
+        output_expiry_task: asyncio.Task[None] | None = None
+        retain_output = False
         try:
             try:
                 first = await asyncio.wait_for(
@@ -163,6 +194,33 @@ def create_app(settings: Settings) -> FastAPI:
                 await drain_task
                 await agent.end_input()
                 async for event in agent.events():
+                    if event.type == "assistant.audio.chunk":
+                        if output_stream is None:
+                            if not event.sample_rate or not event.channels:
+                                raise ProtocolViolation(
+                                    "invalid_provider_audio",
+                                    "Provider returned audio without a format.",
+                                )
+                            output_stream, token = audio_store.create(
+                                event.sample_rate, event.channels
+                            )
+                            base_url = settings.public_base_url or str(
+                                websocket.base_url
+                            ).rstrip("/")
+                            audio_url = (
+                                f"{base_url}/audio/v1/{output_stream.stream_id}"
+                                f"?token={token}"
+                            )
+                            await websocket.send_json(
+                                {
+                                    "type": "assistant.audio",
+                                    "session_id": session.start.session_id,
+                                    "url": audio_url,
+                                    "content_type": "audio/wav",
+                                }
+                            )
+                        await output_stream.write(event.audio or b"")
+                        continue
                     response = {
                         "type": event.type,
                         "session_id": session.start.session_id,
@@ -170,6 +228,13 @@ def create_app(settings: Settings) -> FastAPI:
                     if event.text is not None:
                         response["text"] = event.text
                     await websocket.send_json(response)
+                    if event.type == "assistant.response_finished" and output_stream:
+                        await output_stream.close()
+                if output_stream is not None:
+                    retain_output = True
+                    output_expiry_task = asyncio.create_task(
+                        _expire_audio_stream(audio_store, output_stream.stream_id)
+                    )
                 session.finish()
                 await websocket.send_json(
                     {"type": "session.finished", "session_id": session.start.session_id}
@@ -187,6 +252,10 @@ def create_app(settings: Settings) -> FastAPI:
         finally:
             if input_pcm is not None:
                 await input_pcm.close()
+            if output_stream is not None and not retain_output:
+                await audio_store.revoke(output_stream.stream_id)
+            if output_expiry_task is not None and not retain_output:
+                output_expiry_task.cancel()
             if agent is not None:
                 await agent.close()
             if drain_task is not None:

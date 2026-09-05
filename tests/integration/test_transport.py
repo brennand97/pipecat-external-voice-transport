@@ -27,14 +27,15 @@ def start() -> dict:
 
 
 @asynccontextmanager
-async def running_server(settings: Settings) -> AsyncIterator[str]:
+async def running_server(settings: Settings) -> AsyncIterator[tuple[str, object]]:
     """Run the ASGI app over a real bounded local TCP connection."""
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
+    app = create_app(settings)
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(settings),
+            app,
             host="127.0.0.1",
             port=port,
             access_log=False,
@@ -50,7 +51,7 @@ async def running_server(settings: Settings) -> AsyncIterator[str]:
             await asyncio.sleep(0.01)
         else:
             raise TimeoutError("test server did not start")
-        yield f"http://127.0.0.1:{port}"
+        yield f"http://127.0.0.1:{port}", app
     finally:
         server.should_exit = True
         await asyncio.wait_for(task, _TIMEOUT_SECONDS)
@@ -58,7 +59,7 @@ async def running_server(settings: Settings) -> AsyncIterator[str]:
 
 @pytest.mark.asyncio
 async def test_health_and_ready() -> None:
-    async with running_server(Settings("token")) as base_url:
+    async with running_server(Settings("token")) as (base_url, _app):
         async with httpx.AsyncClient() as client:
             assert (await client.get(f"{base_url}/health")).json() == {"status": "ok"}
             assert (await client.get(f"{base_url}/ready")).json() == {"status": "ready"}
@@ -66,7 +67,7 @@ async def test_health_and_ready() -> None:
 
 @pytest.mark.asyncio
 async def test_transport_lifecycle() -> None:
-    async with running_server(Settings("token")) as base_url:
+    async with running_server(Settings("token")) as (base_url, _app):
         ws_url = base_url.replace("http", "ws", 1) + "/transport/v1"
         async with connect(
             ws_url,
@@ -99,3 +100,20 @@ async def test_transport_lifecycle() -> None:
                     )["type"]
                     == expected
                 )
+
+
+@pytest.mark.asyncio
+async def test_signed_audio_endpoint_streams_wav_without_caching() -> None:
+    async with running_server(Settings("token")) as (base_url, app):
+        stream, token = app.state.audio_store.create(sample_rate=24_000)
+        await stream.write(b"\x00\x00\x01\x00")
+        await stream.close()
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{base_url}/audio/v1/{stream.stream_id}?token={token}"
+            )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("audio/wav")
+        assert response.headers["cache-control"] == "no-store"
+        assert response.content[:4] == b"RIFF"
+        assert response.content[-4:] == b"\x00\x00\x01\x00"
