@@ -58,6 +58,7 @@ class OpenAIRealtimeAgentSession:
         self._model = model
         self._config = config
         self._events: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
+        self._pipeline_ready = asyncio.Event()
         self._source = None
         self._runner = None
         self._runner_task: asyncio.Task[None] | None = None
@@ -106,7 +107,7 @@ class OpenAIRealtimeAgentSession:
                 AgentEvent("user.transcript.final", text=message.content)
             )
 
-        sink = _PipecatEventSink(self._events)
+        sink = _PipecatEventSink(self._events, self._pipeline_ready)
         llm = OpenAIRealtimeLLMService(
             api_key=self._api_key,
             settings=OpenAIRealtimeLLMService.Settings(
@@ -140,6 +141,11 @@ class OpenAIRealtimeAgentSession:
         await self._runner.add_workers(worker)
         await worker.queue_frame(LLMRunFrame())
         self._runner_task = asyncio.create_task(self._runner.run(auto_end=False))
+        try:
+            await asyncio.wait_for(self._pipeline_ready.wait(), timeout=10)
+        except TimeoutError:
+            await self.close()
+            raise RuntimeError("Pipecat pipeline did not become ready") from None
 
     async def push_audio(self, pcm: bytes) -> None:
         if self._source is None:
@@ -211,7 +217,11 @@ class _PipecatPCMSource:
 class _PipecatEventSink:
     """Translate Pipecat lifecycle/text frames without leaking them outward."""
 
-    def __new__(cls, events: asyncio.Queue[AgentEvent | None]):
+    def __new__(
+        cls,
+        events: asyncio.Queue[AgentEvent | None],
+        pipeline_ready: asyncio.Event,
+    ):
         from pipecat.processors.frame_processor import FrameProcessor
 
         class EventSink(FrameProcessor):
@@ -224,12 +234,15 @@ class _PipecatEventSink:
                 from pipecat.frames.frames import (
                     LLMFullResponseEndFrame,
                     LLMFullResponseStartFrame,
+                    StartFrame,
                     TextFrame,
                     TranscriptionFrame,
                     TTSAudioRawFrame,
                 )
 
-                if isinstance(frame, LLMFullResponseStartFrame):
+                if isinstance(frame, StartFrame):
+                    pipeline_ready.set()
+                elif isinstance(frame, LLMFullResponseStartFrame):
                     await events.put(AgentEvent("assistant.response_started"))
                 elif isinstance(frame, TextFrame):
                     # Realtime can surface the same output transcript through
