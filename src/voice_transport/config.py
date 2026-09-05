@@ -25,6 +25,7 @@ class Settings:
     realtime_provider: str = "fake"
     openai_api_key: str = ""
     openai_realtime_model: str = "gpt-realtime-mini"
+    openai_realtime_voice: str = "marin"
     public_base_url: str = ""
     audio_url_signing_key: str = ""
     audio_url_token_ttl_seconds: int = 60
@@ -42,6 +43,7 @@ class Settings:
         openai_realtime_model = os.environ.get(
             "OPENAI_REALTIME_MODEL", "gpt-realtime-mini"
         )
+        openai_realtime_voice = os.environ.get("OPENAI_REALTIME_VOICE", "marin")
         if realtime_provider not in {"fake", "openai_realtime"}:
             raise ConfigurationError("REALTIME_PROVIDER is not supported")
         if realtime_provider == "openai_realtime" and not openai_api_key:
@@ -50,6 +52,8 @@ class Settings:
             )
         if not openai_realtime_model:
             raise ConfigurationError("OPENAI_REALTIME_MODEL must not be empty")
+        if not openai_realtime_voice:
+            raise ConfigurationError("OPENAI_REALTIME_VOICE must not be empty")
         public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
         audio_url_signing_key = os.environ.get("AUDIO_URL_SIGNING_KEY", "")
         trusted_tool_config_path = os.environ.get("TRUSTED_TOOL_CONFIG_PATH", "")
@@ -106,6 +110,7 @@ class Settings:
             realtime_provider,
             openai_api_key,
             openai_realtime_model,
+            openai_realtime_voice,
             public_base_url,
             audio_url_signing_key,
             audio_token_ttl,

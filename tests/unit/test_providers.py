@@ -13,5 +13,8 @@ def test_openai_provider_creates_isolated_agent_session() -> None:
         transport_token="token",
         realtime_provider="openai_realtime",
         openai_api_key="test-key-not-used",
+        openai_realtime_voice="cedar",
     )
-    assert isinstance(create_agent_session(settings), OpenAIRealtimeAgentSession)
+    session = create_agent_session(settings)
+    assert isinstance(session, OpenAIRealtimeAgentSession)
+    assert session._voice == "cedar"

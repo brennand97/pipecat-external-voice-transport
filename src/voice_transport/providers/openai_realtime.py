@@ -26,6 +26,7 @@ from pipecat.services.openai.realtime import events as realtime_events
 from pipecat.services.openai.realtime.events import (
     AudioConfiguration,
     AudioInput,
+    AudioOutput,
     InputAudioNoiseReduction,
     InputAudioTranscription,
     SemanticTurnDetection,
@@ -121,12 +122,15 @@ def _ready_openai_service(
 class OpenAIRealtimeProvider:
     """Create Pipecat-backed sessions for OpenAI's Realtime API."""
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(self, api_key: str, model: str, voice: str) -> None:
         self._api_key = api_key
         self._model = model
+        self._voice = voice
 
     def create_session(self, config: RealtimeProviderConfig) -> AgentSession:
-        return OpenAIRealtimeAgentSession(self._api_key, self._model, config)
+        return OpenAIRealtimeAgentSession(
+            self._api_key, self._model, self._voice, config
+        )
 
 
 class OpenAIRealtimeAgentSession:
@@ -136,10 +140,12 @@ class OpenAIRealtimeAgentSession:
         self,
         api_key: str,
         model: str,
+        voice: str,
         config: RealtimeProviderConfig,
     ) -> None:
         self._api_key = api_key
         self._model = model
+        self._voice = voice
         self._config = config
         self._events: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
         self._pipeline_ready = asyncio.Event()
@@ -180,7 +186,8 @@ class OpenAIRealtimeAgentSession:
                             transcription=InputAudioTranscription(),
                             turn_detection=SemanticTurnDetection(),
                             noise_reduction=InputAudioNoiseReduction(type="near_field"),
-                        )
+                        ),
+                        output=AudioOutput(voice=self._voice),
                     )
                 ),
             ),

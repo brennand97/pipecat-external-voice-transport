@@ -36,6 +36,7 @@ def create_agent_session(settings: Settings) -> AgentSession:
         provider = OpenAIRealtimeProvider(
             settings.openai_api_key,
             settings.openai_realtime_model,
+            settings.openai_realtime_voice,
         )
     else:  # Settings validation prevents this; retain a defensive boundary.
         raise ValueError(f"unsupported realtime provider: {settings.realtime_provider}")
