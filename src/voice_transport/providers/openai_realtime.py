@@ -214,13 +214,27 @@ class _PipecatEventSink:
                     LLMFullResponseStartFrame,
                     TextFrame,
                     TranscriptionFrame,
+                    TTSAudioRawFrame,
                 )
 
                 if isinstance(frame, LLMFullResponseStartFrame):
                     await events.put(AgentEvent("assistant.response_started"))
                 elif isinstance(frame, TextFrame):
-                    self._text_parts.append(frame.text)
-                    await events.put(AgentEvent("assistant.text.delta", frame.text))
+                    # Realtime can surface the same output transcript through
+                    # more than one provider event. Preserve audio unchanged,
+                    # but avoid presenting duplicated adjacent text chunks.
+                    if not self._text_parts or self._text_parts[-1] != frame.text:
+                        self._text_parts.append(frame.text)
+                        await events.put(AgentEvent("assistant.text.delta", frame.text))
+                elif isinstance(frame, TTSAudioRawFrame):
+                    await events.put(
+                        AgentEvent(
+                            "assistant.audio.chunk",
+                            audio=frame.audio,
+                            sample_rate=frame.sample_rate,
+                            channels=frame.num_channels,
+                        )
+                    )
                 elif isinstance(frame, TranscriptionFrame) and frame.finalized:
                     await events.put(AgentEvent("user.transcript.final", frame.text))
                 elif isinstance(frame, LLMFullResponseEndFrame):

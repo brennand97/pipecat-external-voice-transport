@@ -13,6 +13,9 @@ class AgentEvent:
 
     type: str
     text: str | None = None
+    audio: bytes | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
 
 
 class AgentSession(Protocol):
