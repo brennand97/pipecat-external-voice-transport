@@ -73,6 +73,7 @@ class OpenAIRealtimeAgentSession:
         from pipecat.processors.aggregators.llm_context import LLMContext
         from pipecat.processors.aggregators.llm_response_universal import (
             LLMContextAggregatorPair,
+            UserTurnMessageAddedMessage,
         )
         from pipecat.services.openai.realtime.events import (
             AudioConfiguration,
@@ -94,6 +95,17 @@ class OpenAIRealtimeAgentSession:
             tool_schemas = await self._tool_bridge.function_schemas()
         context = LLMContext([], tools=tool_schemas)
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
+
+        @user_aggregator.event_handler("on_user_turn_message_added")
+        async def on_user_turn_message_added(
+            _aggregator, message: UserTurnMessageAddedMessage
+        ) -> None:
+            # Realtime providers finalize input transcription at the response
+            # boundary; emit the provider's finalized text without local STT.
+            await self._events.put(
+                AgentEvent("user.transcript.final", text=message.content)
+            )
+
         sink = _PipecatEventSink(self._events)
         llm = OpenAIRealtimeLLMService(
             api_key=self._api_key,
