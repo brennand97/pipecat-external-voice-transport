@@ -4,7 +4,7 @@ A network service implementing the provider-neutral Voice Satellite External Tra
 
 ## Phase 1 status
 
-The service currently provides an authenticated protocol skeleton with health/readiness endpoints, strict v1 validation, bounded PCM accounting, concurrency limits, cancellation, and deterministic fake-agent completion. It **does not yet include Pipecat, OpenAI Realtime, Home Assistant tools, or streaming output audio**. Do not select it for production satellite use until later phases are complete.
+The service currently provides an authenticated protocol skeleton with health/readiness endpoints, strict v1 validation, bounded ordered PCM handoff with backpressure, concurrency limits, cancellation, and deterministic fake-agent completion. It **does not yet include Pipecat, OpenAI Realtime, Home Assistant tools, or streaming output audio**. Do not select it for production satellite use until later phases are complete.
 
 ## Local development
 
