@@ -6,6 +6,7 @@ import asyncio
 import logging
 import secrets
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -25,6 +26,7 @@ from .protocol import (
 )
 from .providers import create_agent_session, prepare_provider
 from .session import Session, SessionRegistry
+from .session_audit import SessionAuditLog
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -85,6 +87,11 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.audio_store = audio_store
     app.state.registry = registry
+    app.state.audit = SessionAuditLog(
+        Path(settings.session_audit_log_path),
+        mode=settings.session_audit_mode,  # type: ignore[arg-type]
+        retention_days=settings.session_audit_retention_days,
+    )
     app.state.ready = True
 
     @app.get("/health")
@@ -119,6 +126,7 @@ def create_app(settings: Settings) -> FastAPI:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
         await websocket.accept()
+        await app.state.audit.initialize()
         session: Session | None = None
         actor: ConversationActor | None = None
         writer_task: asyncio.Task | None = None
@@ -131,6 +139,14 @@ def create_app(settings: Settings) -> FastAPI:
             assert actor is not None and session is not None
             async for event in actor.events():
                 response_id = event.response_id
+                await app.state.audit.record(
+                    session.start.session_id,
+                    event.type,
+                    turn_id=event.turn_id,
+                    response_id=response_id,
+                    transcript=event.text,
+                    source=event.source,
+                )
                 if event.type == "assistant.audio.chunk":
                     if response_id is None:
                         continue
@@ -210,7 +226,15 @@ def create_app(settings: Settings) -> FastAPI:
                 )
             start = parse_session_start(parse_json_message(first["text"]))
             session = await registry.create(start, settings.max_input_bytes)
-            agent = create_agent_session(settings)
+            await app.state.audit.record(
+                start.session_id,
+                "session.started",
+                satellite_entity_id=start.satellite_entity_id,
+                satellite_name=start.satellite_name,
+            )
+            agent = create_agent_session(
+                settings, audit=app.state.audit, session_id=start.session_id
+            )
             actor = ConversationActor(agent)
             await actor.start()
             session.mark_ready()
@@ -323,6 +347,9 @@ def create_app(settings: Settings) -> FastAPI:
             for task in tuple(expiry_tasks):
                 await _cancel_task(task)
             if session is not None:
+                await app.state.audit.record(
+                    session.start.session_id, "session.finished"
+                )
                 await registry.remove(session.start.session_id)
 
     return app

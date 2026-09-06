@@ -154,7 +154,9 @@ async def test_response_cancel_is_nonterminal_and_revokes_active_audio(
                 yield event
 
     agent = StreamingAgent()
-    monkeypatch.setattr("voice_transport.app.create_agent_session", lambda _: agent)
+    monkeypatch.setattr(
+        "voice_transport.app.create_agent_session", lambda *_args, **_kwargs: agent
+    )
     async with running_server(Settings("token")) as (base_url, _app):
         ws_url = base_url.replace("http", "ws", 1) + "/transport/v1"
         async with connect(
@@ -233,7 +235,8 @@ async def test_tool_startup_failure_returns_sanitized_protocol_error(
             yield  # pragma: no cover - start always fails
 
     monkeypatch.setattr(
-        "voice_transport.app.create_agent_session", lambda _: FailingAgent()
+        "voice_transport.app.create_agent_session",
+        lambda *_args, **_kwargs: FailingAgent(),
     )
     async with running_server(Settings("token")) as (base_url, _app):
         ws_url = base_url.replace("http", "ws", 1) + "/transport/v1"

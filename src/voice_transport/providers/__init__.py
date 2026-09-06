@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from voice_transport.agent.session import AgentSession
 from voice_transport.config import Settings
+from voice_transport.session_audit import SessionAuditLog
 from voice_transport.tools.config import create_tool_registry
 
 from .base import RealtimeProvider, RealtimeProviderConfig
@@ -21,11 +22,15 @@ def prepare_provider(settings: Settings) -> None:
         from . import openai_realtime  # noqa: F401
 
 
-def create_agent_session(settings: Settings) -> AgentSession:
+def create_agent_session(
+    settings: Settings, *, audit: SessionAuditLog | None = None, session_id: str = ""
+) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
     config = RealtimeProviderConfig(
         system_instruction=DEFAULT_SYSTEM_INSTRUCTION,
-        tool_registry=create_tool_registry(settings.trusted_tool_config_path),
+        tool_registry=create_tool_registry(
+            settings.trusted_tool_config_path, audit=audit, session_id=session_id
+        ),
     )
     provider: RealtimeProvider
     if settings.realtime_provider == "fake":

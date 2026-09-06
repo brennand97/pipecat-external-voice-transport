@@ -220,6 +220,26 @@ docker compose restart pipecat-external-voice-transport
 - Access logging is disabled in the supplied container command so signed audio query tokens are not recorded.
 - Active provider sessions, streams, and tasks are released on cancellation, disconnect, timeout, or process shutdown.
 
+## Session audit logs
+
+Session audit logging is disabled by default. Mount a writable, access-restricted
+host directory at `/var/log/voice-transport`, then configure:
+
+```env
+SESSION_AUDIT_MODE=metadata # or debug_content
+SESSION_AUDIT_LOG_PATH=/var/log/voice-transport
+SESSION_AUDIT_RETENTION_DAYS=7
+```
+
+Daily `sessions-YYYY-MM-DD.jsonl` files are pruned after the configured
+retention period. `metadata` records correlated lifecycle IDs, timing, and tool
+outcomes but omits transcript, tool argument, and tool-result content.
+`debug_content` additionally records transcripts and tool arguments/results so
+an operator can reconstruct a conversation and its agent actions. Both modes
+always redact common credential fields and signed URL query strings, but
+`debug_content` remains sensitive personal/home data and must be enabled only
+for deliberate diagnostics.
+
 To roll back, set `IMAGE_TAG` to the prior tested tag and run:
 
 ```bash

@@ -1,5 +1,7 @@
+import json
 from typing import Any
 
+from voice_transport.session_audit import SessionAuditLog
 from voice_transport.tools.base import ToolDefinition, ToolResult
 from voice_transport.tools.registry import ToolRegistry
 
@@ -60,6 +62,27 @@ async def test_registry_rejects_unknown_and_out_of_range_model_arguments() -> No
     assert out_of_range.is_error is True
     assert "must be <= 100" in out_of_range.content[0]["text"]
     assert provider.calls == []
+
+
+async def test_debug_audit_records_tool_arguments_and_results(tmp_path) -> None:
+    provider = RecordingProvider()
+    registry = ToolRegistry(
+        (provider,),
+        audit=SessionAuditLog(tmp_path, mode="debug_content", retention_days=7),
+        session_id="session-1",
+    )
+
+    await registry.call("set_light", {"name": "Kitchen", "brightness": 50})
+
+    events = [
+        json.loads(line)
+        for line in next(tmp_path.glob("sessions-*.jsonl")).read_text().splitlines()
+    ]
+    completed = next(
+        event for event in events if event["event"] == "tool.call_finished"
+    )
+    assert completed["arguments"] == {"brightness": 50, "name": "Kitchen"}
+    assert completed["result"] == [{"text": "ok", "type": "text"}]
 
 
 async def test_registry_forwards_valid_model_arguments() -> None:

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..session_audit import SessionAuditLog
 from .mcp import MCPServerConfig, MCPToolProvider
 from .registry import ToolRegistry
 from .script import ScriptToolConfig, ScriptToolProvider
@@ -16,7 +17,9 @@ class ToolConfigurationError(ValueError):
     """Raised when the trusted deployment tool configuration is unsafe."""
 
 
-def create_tool_registry(config_path: str) -> ToolRegistry | None:
+def create_tool_registry(
+    config_path: str, *, audit: SessionAuditLog | None = None, session_id: str = ""
+) -> ToolRegistry | None:
     """Create a fresh session-scoped registry from a trusted JSON file.
 
     The file selects fixed MCP endpoints or executable argv vectors. It never
@@ -38,7 +41,7 @@ def create_tool_registry(config_path: str) -> ToolRegistry | None:
     providers = [MCPToolProvider(_mcp_config(item)) for item in mcp_servers] + [
         ScriptToolProvider(_script_config(item)) for item in script_tools
     ]
-    return ToolRegistry(tuple(providers))
+    return ToolRegistry(tuple(providers), audit=audit, session_id=session_id)
 
 
 def _mcp_config(value: object) -> MCPServerConfig:

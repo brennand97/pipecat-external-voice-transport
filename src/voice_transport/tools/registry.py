@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..session_audit import SessionAuditLog
 from .base import AsyncToolProvider, ToolDefinition, ToolResult
 
 
@@ -14,6 +15,8 @@ class ToolRegistry:
     """A session-scoped registry; duplicate model-facing names fail closed."""
 
     providers: tuple[AsyncToolProvider, ...]
+    audit: SessionAuditLog | None = None
+    session_id: str = ""
     _tools: dict[str, AsyncToolProvider] = field(default_factory=dict)
     _definitions: list[ToolDefinition] = field(default_factory=list)
     _ready: bool = False
@@ -31,6 +34,9 @@ class ToolRegistry:
                 self._tools[tool.name] = provider
                 self._definitions.append(tool)
         self._ready = True
+        await self._record(
+            "tools.discovered", tools=[tool.name for tool in self._definitions]
+        )
         return list(self._definitions)
 
     async def call(self, name: str, arguments: dict[str, Any]) -> ToolResult:
@@ -45,16 +51,41 @@ class ToolRegistry:
         definition = next(tool for tool in self._definitions if tool.name == name)
         validation_error = _validate_arguments(definition.input_schema, arguments)
         if validation_error is not None:
+            await self._record(
+                "tool.validation_rejected",
+                tool_name=name,
+                arguments=arguments,
+                error=validation_error,
+            )
             return ToolResult(
                 content=[
                     {"type": "text", "text": f"Invalid arguments: {validation_error}"}
                 ],
                 is_error=True,
             )
-        return await provider.call_tool(name, arguments)
+        await self._record("tool.call_started", tool_name=name, arguments=arguments)
+        try:
+            result = await provider.call_tool(name, arguments)
+        except Exception as err:
+            await self._record(
+                "tool.call_failed", tool_name=name, arguments=arguments, error=str(err)
+            )
+            raise
+        await self._record(
+            "tool.call_finished",
+            tool_name=name,
+            arguments=arguments,
+            result=result.content,
+            is_error=result.is_error,
+        )
+        return result
 
     async def close(self) -> None:
         await asyncio.gather(*(provider.close() for provider in self.providers))
+
+    async def _record(self, event: str, **fields: Any) -> None:
+        if self.audit is not None and self.session_id:
+            await self.audit.record(self.session_id, event, **fields)
 
 
 def _validate_arguments(
