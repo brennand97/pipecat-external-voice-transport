@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -24,6 +26,9 @@ from .protocol import (
 )
 from .providers import create_agent_session, prepare_provider
 from .session import Session, SessionRegistry
+from .session_audit import SessionAuditLog
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def _send_error(
@@ -82,6 +87,12 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.audio_store = audio_store
     app.state.registry = registry
+    app.state.audit = SessionAuditLog(
+        Path(settings.session_audit_log_path),
+        mode=settings.session_audit_mode,  # type: ignore[arg-type]
+        retention_days=settings.session_audit_retention_days,
+        max_audio_bytes_per_session=settings.session_audit_max_audio_bytes,
+    )
     app.state.ready = True
 
     @app.get("/health")
@@ -116,6 +127,7 @@ def create_app(settings: Settings) -> FastAPI:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
             return
         await websocket.accept()
+        await app.state.audit.initialize()
         session: Session | None = None
         actor: ConversationActor | None = None
         writer_task: asyncio.Task | None = None
@@ -128,6 +140,14 @@ def create_app(settings: Settings) -> FastAPI:
             assert actor is not None and session is not None
             async for event in actor.events():
                 response_id = event.response_id
+                await app.state.audit.record(
+                    session.start.session_id,
+                    event.type,
+                    turn_id=event.turn_id,
+                    response_id=response_id,
+                    transcript=event.text,
+                    source=event.source,
+                )
                 if event.type == "assistant.audio.chunk":
                     if response_id is None:
                         continue
@@ -160,6 +180,15 @@ def create_app(settings: Settings) -> FastAPI:
                             }
                         )
                     try:
+                        await app.state.audit.record_audio(
+                            session.start.session_id,
+                            "output",
+                            event.audio or b"",
+                            sample_rate=event.sample_rate,
+                            channels=event.channels,
+                            turn_id=event.turn_id,
+                            response_id=response_id,
+                        )
                         await stream.write(event.audio or b"")
                     except AudioAccessError:
                         await audio_store.revoke(stream.stream_id)
@@ -180,6 +209,20 @@ def create_app(settings: Settings) -> FastAPI:
                     response["text"] = event.text
                 if event.source is not None:
                     response["source"] = event.source
+                if event.tool_call_id is not None:
+                    response["tool_call_id"] = event.tool_call_id
+                if event.tool_name is not None:
+                    response["tool_name"] = event.tool_name
+                if event.tool_arguments is not None:
+                    response["arguments"] = event.tool_arguments
+                if event.tool_result is not None:
+                    response["result"] = event.tool_result
+                if event.tool_arguments_truncated:
+                    response["arguments_truncated"] = True
+                if event.tool_result_truncated:
+                    response["result_truncated"] = True
+                if event.is_error is not None:
+                    response["is_error"] = event.is_error
                 await websocket.send_json(response)
                 if event.type == "assistant.response_finished" and response_id:
                     stream = streams.pop(response_id, None)
@@ -207,11 +250,35 @@ def create_app(settings: Settings) -> FastAPI:
                 )
             start = parse_session_start(parse_json_message(first["text"]))
             session = await registry.create(start, settings.max_input_bytes)
-            agent = create_agent_session(settings)
+            await app.state.audit.record(
+                start.session_id,
+                "session.started",
+                satellite_entity_id=start.satellite_entity_id,
+                satellite_name=start.satellite_name,
+            )
+            agent = create_agent_session(
+                settings,
+                audit=app.state.audit,
+                session_id=start.session_id,
+                initial_prompt=start.initial_prompt,
+                initial_voice=start.initial_voice,
+                tool_profile=start.tool_profile,
+                requested_tools=start.requested_tools,
+                input_modalities=start.input_modalities,
+                output_modalities=start.output_modalities,
+                home_assistant_device_id=start.device_id,
+            )
             actor = ConversationActor(agent)
             await actor.start()
             session.mark_ready()
-            await websocket.send_json(ready_message(start.session_id))
+            await websocket.send_json(
+                ready_message(
+                    start.session_id,
+                    effective_profile=actor.effective_profile,
+                    effective_tools=actor.effective_tool_names,
+                    effective_voice=start.initial_voice,
+                )
+            )
             writer_task = asyncio.create_task(emit_events())
             started_at = time.monotonic()
 
@@ -247,12 +314,25 @@ def create_app(settings: Settings) -> FastAPI:
                 if frame.get("type") == "websocket.disconnect":
                     return
                 if frame.get("bytes") is not None:
+                    if "audio" not in session.start.input_modalities:
+                        raise ProtocolViolation(
+                            "unsupported_input_modality",
+                            "Audio input is not enabled for this session.",
+                        )
                     if actor.open_turn_id is None:
                         implicit_turn_number += 1
                         await actor.start_turn(
                             f"implicit-{implicit_turn_number}", TurnInput.AUDIO
                         )
                     session.add_audio(frame["bytes"], settings.max_audio_frame_bytes)
+                    await app.state.audit.record_audio(
+                        session.start.session_id,
+                        "input",
+                        frame["bytes"],
+                        sample_rate=16_000,
+                        channels=1,
+                        turn_id=actor.open_turn_id,
+                    )
                     await actor.submit_audio(actor.open_turn_id, frame["bytes"])
                     continue
                 if frame.get("text") is None:
@@ -265,6 +345,11 @@ def create_app(settings: Settings) -> FastAPI:
                 try:
                     if message_type == "turn.start":
                         turn = parse_turn_start(message)
+                        if turn.input_type not in session.start.input_modalities:
+                            raise ProtocolViolation(
+                                "unsupported_input_modality",
+                                "Turn input is not enabled for this session.",
+                            )
                         await actor.start_turn(turn.turn_id, TurnInput(turn.input_type))
                     elif message_type == "input.text":
                         turn_id, text = parse_input_text(message)
@@ -298,6 +383,19 @@ def create_app(settings: Settings) -> FastAPI:
                 websocket, err, session.start.session_id if session else None
             )
             await websocket.close(code=status.WS_1002_PROTOCOL_ERROR)
+        except Exception:  # noqa: BLE001 - never leak provider/tool internals to clients
+            _LOGGER.exception("Provider session startup or execution failed")
+            if session is not None:
+                session.fail()
+            await _send_error(
+                websocket,
+                ProtocolViolation(
+                    "provider_failure",
+                    "The configured assistant tools are unavailable.",
+                ),
+                session.start.session_id if session else None,
+            )
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
         finally:
             if actor is not None:
                 await actor.close()
@@ -307,6 +405,10 @@ def create_app(settings: Settings) -> FastAPI:
             for task in tuple(expiry_tasks):
                 await _cancel_task(task)
             if session is not None:
+                await app.state.audit.record(
+                    session.start.session_id, "session.finished"
+                )
+                await app.state.audit.finish_session(session.start.session_id)
                 await registry.remove(session.start.session_id)
 
     return app

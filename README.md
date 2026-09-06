@@ -162,7 +162,23 @@ Tools are disabled unless `TRUSTED_TOOL_CONFIG_PATH` names a read-only JSON file
       "timeout_seconds": 15,
       "max_concurrent_calls": 2
     }
-  ]
+  ],
+  "profiles": {
+    "home-satellite": {
+      "providers": ["home-assistant"],
+      "allowed_tools": ["intent__Hass*", "voice_satellite__StartTimer"],
+      "context_injections": {
+        "voice_satellite__StartTimer": {
+          "device_id": "home_assistant_device_id"
+        }
+      }
+    },
+    "home-generic": {
+      "providers": ["home-assistant"],
+      "allowed_tools": ["intent__Hass*"]
+    }
+  },
+  "default_profile": "home-generic"
 }
 ```
 
@@ -172,6 +188,9 @@ Security rules:
 - Script commands are fixed argv arrays; the model cannot select a command or shell expression.
 - Do not put credentials in this JSON file. For authenticated network MCP servers, `bearer_token_env` names an environment variable injected into the service; its value is sent only as an HTTP `Authorization: Bearer` header. For stdio MCP children, `env_names` may copy specifically named variables already injected into the service environment.
 - Mount executables and configuration read-only and grant only the permissions required by each tool.
+- Trusted profile/provider allowlists accept exact names or one anchored terminal wildcard, such as `intent__Hass*`. Client `requested_tools` are exact names only.
+- `context_injections` accepts only server-known context sources. `home_assistant_device_id` is available exclusively to physical Satellite attachments. If it is absent, the context-required tool is omitted before discovery and schema advertisement; generic conversation sessions therefore never see `voice_satellite__StartTimer`.
+- The injected provider argument is removed from the model-facing schema, and model attempts to supply it are rejected.
 
 ## Protocol overview
 
@@ -181,7 +200,25 @@ The client authenticates with:
 Authorization: Bearer <EXTERNAL_TRANSPORT_TOKEN>
 ```
 
-It sends `session.start`, waits for `session.ready`, and then submits explicit turns:
+It sends `session.start`, waits for `session.ready`, and then submits explicit turns. A client may optionally override the default OpenAI system instruction and voice for that one session via `conversation.initial_prompt` and `conversation.initial_voice`; neither is persisted or applied to later sessions:
+
+```json
+{
+  "type":"session.start",
+  "protocol_version":1,
+  "session_id":"prompt-test-1",
+  "satellite":{"entity_id":"assist_satellite.kitchen","name":"Kitchen"},
+  "audio":{"encoding":"pcm_s16le","sample_rate":16000,"channels":1},
+  "conversation":{
+    "id":null,
+    "wake_word":null,
+    "initial_prompt":"You are concise. Call home tools silently and state only the result.",
+    "initial_voice":"ballad"
+  }
+}
+```
+
+`initial_prompt` must be a non-empty string up to 16,000 UTF-8 bytes; `initial_voice` must be a non-empty string up to 128 bytes. Omit either field (or supply `null`) to use the deployment default. Then start an audio turn:
 
 ```json
 {"type":"turn.start","turn_id":"turn-1","input":"audio"}
@@ -220,6 +257,36 @@ docker compose restart pipecat-external-voice-transport
 - Access logging is disabled in the supplied container command so signed audio query tokens are not recorded.
 - Active provider sessions, streams, and tasks are released on cancellation, disconnect, timeout, or process shutdown.
 
+## Session audit logs
+
+Session audit logging is disabled by default. Mount a writable, access-restricted
+host directory at `/var/log/voice-transport`, then configure:
+
+```env
+SESSION_AUDIT_MODE=metadata # or debug_content
+SESSION_AUDIT_LOG_PATH=/var/log/voice-transport
+SESSION_AUDIT_RETENTION_DAYS=7
+# Per session, per input/output direction; only used by debug_content.
+SESSION_AUDIT_MAX_AUDIO_BYTES=10000000
+```
+
+Daily `sessions-YYYY-MM-DD.jsonl` files are pruned after the configured
+retention period. `metadata` records correlated lifecycle IDs, timing, and tool
+outcomes but omits transcript, tool argument, and tool-result content.
+`debug_content` additionally records transcripts and tool arguments/results so
+an operator can reconstruct a conversation and its agent actions. `metadata`
+never records audio. Both modes always redact common credential fields and
+signed URL query strings, but `debug_content` remains sensitive personal/home
+data and must be enabled only for deliberate diagnostics.
+
+When `debug_content` is explicitly enabled, input and output raw PCM sidecars
+are retained instead. Each `debug.audio_captured` JSONL event points to a
+relative `.pcm` filename and carries `session_id`, `turn_id`, output
+`response_id`, timestamp, format, and byte-range correlation. Sidecars are
+16-bit little-endian PCM; use the event's sample rate/channels when replaying.
+They are capped by `SESSION_AUDIT_MAX_AUDIO_BYTES` per session and direction,
+never exposed to a browser, and pruned with the normal audit retention policy.
+
 To roll back, set `IMAGE_TAG` to the prior tested tag and run:
 
 ```bash
@@ -256,6 +323,21 @@ set -a
 . ./.env
 set +a
 uvicorn voice_transport.app:runtime_app --factory --host 127.0.0.1 --port 8080
+```
+
+### Opt-in live MCP E2E test
+
+The network-free suite is the default. A separate billable, read-only live test
+proves that a Realtime model receives the configured function schema and calls
+Home Assistant MCP's `homeassistant__GetLiveContext` tool. It is skipped unless
+explicitly enabled and writes only temporary audit files:
+
+```bash
+RUN_LIVE_OPENAI_MCP_TEST=1 \
+OPENAI_API_KEY=... \
+HOMEASSISTANT_MCP_TOKEN=... \
+LIVE_OPENAI_REALTIME_MODEL=gpt-realtime-2.1-mini \
+.venv/bin/pytest -q tests/integration/test_live_openai_mcp.py
 ```
 
 Never place provider keys, transport tokens, signing keys, Home Assistant credentials, or signed audio URLs in source control, command output, test fixtures, or bug reports.

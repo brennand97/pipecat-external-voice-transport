@@ -51,27 +51,37 @@ class MCPToolProvider:
     async def list_tools(self) -> list[ToolDefinition]:
         session = await self._session_or_connect()
         result = await session.list_tools()
-        return [
-            ToolDefinition(tool.name, tool.description or "", tool.inputSchema)
-            for tool in result.tools
-            if tool.name in self.config.allowed_tools
-        ]
+        definitions = []
+        for tool in result.tools:
+            if not self._is_allowed(tool.name):
+                continue
+            schema = getattr(tool, "input_schema", None)
+            if not isinstance(schema, dict):
+                raise ValueError(f"MCP tool {tool.name!r} has an invalid input schema")
+            definitions.append(
+                ToolDefinition(tool.name, tool.description or "", schema)
+            )
+        return definitions
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        if name not in self.config.allowed_tools:
+        if not self._is_allowed(name):
             return ToolResult(
                 content=[{"type": "text", "text": f"Tool is not allowed: {name}"}],
                 is_error=True,
             )
         session = await self._session_or_connect()
         async with self._calls:
-            result = await asyncio.wait_for(
-                session.call_tool(name, arguments),
-                timeout=self.config.request_timeout_seconds,
-            )
+            # Keep streamable HTTP operations in the task that owns its
+            # context; ``wait_for`` would create a child task.
+            async with asyncio.timeout(self.config.request_timeout_seconds):
+                result = await session.call_tool(name, arguments)
         return ToolResult(
             content=[item.model_dump(mode="json") for item in result.content],
-            is_error=bool(result.isError),
+            # MCP SDK v2 uses Pydantic snake_case attributes. Keep a legacy
+            # fallback for compatible older SDK result objects.
+            is_error=bool(
+                getattr(result, "is_error", getattr(result, "isError", False))
+            ),
         )
 
     async def close(self) -> None:
@@ -131,6 +141,12 @@ class MCPToolProvider:
             self._stack = stack
             self._session = session
             return session
+
+    def _is_allowed(self, name: str) -> bool:
+        return any(
+            name.startswith(pattern[:-1]) if pattern.endswith("*") else name == pattern
+            for pattern in self.config.allowed_tools
+        )
 
     def _require_url(self) -> str:
         if not self.config.url:

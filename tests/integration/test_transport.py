@@ -109,6 +109,54 @@ async def test_transport_supports_persistent_audio_and_text_turns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_session_start_forwards_prompt_and_voice_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class IdleAgent:
+        def __init__(self) -> None:
+            self.events_queue: asyncio.Queue[AgentEvent | None] = asyncio.Queue()
+
+        async def start(self) -> None:
+            return None
+
+        async def cancel(self) -> None:
+            await self.events_queue.put(None)
+
+        async def close(self) -> None:
+            await self.cancel()
+
+        async def events(self):
+            while event := await self.events_queue.get():
+                yield event
+
+    def create_agent(*_args, **kwargs):
+        captured.update(kwargs)
+        return IdleAgent()
+
+    monkeypatch.setattr("voice_transport.app.create_agent_session", create_agent)
+    message = start()
+    message["conversation"]["initial_prompt"] = "Keep replies brief."
+    message["conversation"]["initial_voice"] = "ballad"
+    async with running_server(Settings("token")) as (base_url, _app):
+        ws_url = base_url.replace("http", "ws", 1) + "/transport/v1"
+        async with connect(
+            ws_url,
+            additional_headers={"authorization": "Bearer token"},
+            open_timeout=_TIMEOUT_SECONDS,
+            close_timeout=_TIMEOUT_SECONDS,
+        ) as websocket:
+            await websocket.send(json.dumps(message))
+            assert json.loads(await websocket.recv())["type"] == "session.ready"
+            await websocket.send('{"type":"session.cancel"}')
+            assert json.loads(await websocket.recv())["type"] == "session.finished"
+
+    assert captured["initial_prompt"] == "Keep replies brief."
+    assert captured["initial_voice"] == "ballad"
+
+
+@pytest.mark.asyncio
 async def test_response_cancel_is_nonterminal_and_revokes_active_audio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -154,7 +202,9 @@ async def test_response_cancel_is_nonterminal_and_revokes_active_audio(
                 yield event
 
     agent = StreamingAgent()
-    monkeypatch.setattr("voice_transport.app.create_agent_session", lambda _: agent)
+    monkeypatch.setattr(
+        "voice_transport.app.create_agent_session", lambda *_args, **_kwargs: agent
+    )
     async with running_server(Settings("token")) as (base_url, _app):
         ws_url = base_url.replace("http", "ws", 1) + "/transport/v1"
         async with connect(
@@ -216,6 +266,42 @@ async def test_response_cancel_is_nonterminal_and_revokes_active_audio(
             text_interrupted = await client.get(second_audio["url"])
         assert revoked.status_code == 404
         assert text_interrupted.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_tool_startup_failure_returns_sanitized_protocol_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingAgent:
+        async def start(self) -> None:
+            raise ValueError("remote tool schema changed")
+
+        async def close(self) -> None:
+            return None
+
+        async def events(self):
+            yield  # pragma: no cover - start always fails
+
+    monkeypatch.setattr(
+        "voice_transport.app.create_agent_session",
+        lambda *_args, **_kwargs: FailingAgent(),
+    )
+    async with running_server(Settings("token")) as (base_url, _app):
+        ws_url = base_url.replace("http", "ws", 1) + "/transport/v1"
+        async with connect(
+            ws_url,
+            additional_headers={"authorization": "Bearer token"},
+            open_timeout=_TIMEOUT_SECONDS,
+            close_timeout=_TIMEOUT_SECONDS,
+        ) as websocket:
+            await websocket.send(json.dumps(start()))
+            error = json.loads(await websocket.recv())
+            assert error == {
+                "type": "error",
+                "code": "provider_failure",
+                "message": "The configured assistant tools are unavailable.",
+                "session_id": "test-session",
+            }
 
 
 @pytest.mark.asyncio

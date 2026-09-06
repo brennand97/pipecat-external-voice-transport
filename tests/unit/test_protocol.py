@@ -5,6 +5,7 @@ from voice_transport.protocol import (
     parse_input_text,
     parse_session_start,
     parse_turn_start,
+    ready_message,
     validate_control,
 )
 
@@ -26,6 +27,49 @@ def test_parses_valid_v1_start() -> None:
     assert start.satellite_entity_id == "assist_satellite.kitchen"
 
 
+def test_ready_metadata_never_echoes_prompt_content() -> None:
+    ready = ready_message(
+        "session",
+        effective_profile="home",
+        effective_tools=("safe",),
+        effective_voice="ballad",
+    )
+
+    assert ready["effective_profile"] == "home"
+    assert ready["effective_tools"] == ["safe"]
+    assert ready["effective_voice"] == "ballad"
+    assert "initial_prompt" not in ready
+
+
+def test_generic_text_client_has_no_satellite_or_device_context() -> None:
+    message = valid_start()
+    message.pop("satellite")
+    message["client"] = {"id": "conversation.reginold", "kind": "ha_conversation"}
+    message["conversation"] = {
+        "id": "ha-conversation-id",
+        "device_id": None,
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+    }
+
+    start = parse_session_start(message)
+
+    assert start.satellite_entity_id is None
+    assert start.client_kind == "ha_conversation"
+    assert start.input_modalities == frozenset({"text"})
+    assert start.output_modalities == frozenset({"text"})
+
+
+def test_optional_initial_prompt_overrides_a_single_session() -> None:
+    message = valid_start()
+    message["conversation"]["initial_prompt"] = "Answer in a pirate voice."
+    message["conversation"]["initial_voice"] = "ballad"
+
+    start = parse_session_start(message)
+    assert start.initial_prompt == "Answer in a pirate voice."
+    assert start.initial_voice == "ballad"
+
+
 @pytest.mark.parametrize(
     "field,value", [("protocol_version", 2), ("type", "input.end")]
 )
@@ -33,6 +77,22 @@ def test_rejects_invalid_start(field: str, value: object) -> None:
     message = valid_start()
     message[field] = value
     with pytest.raises(ProtocolViolation):
+        parse_session_start(message)
+
+
+def test_rejects_invalid_initial_prompt() -> None:
+    message = valid_start()
+    message["conversation"]["initial_prompt"] = " "
+    with pytest.raises(ProtocolViolation, match="initial_prompt"):
+        parse_session_start(message)
+
+    message["conversation"]["initial_prompt"] = "x" * 16_001
+    with pytest.raises(ProtocolViolation, match="16,000"):
+        parse_session_start(message)
+
+    message = valid_start()
+    message["conversation"]["initial_voice"] = " "
+    with pytest.raises(ProtocolViolation, match="initial_voice"):
         parse_session_start(message)
 
 

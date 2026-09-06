@@ -64,6 +64,44 @@ def _consume_task_result(task: asyncio.Task) -> None:
         pass
 
 
+def _normalize_text_chunk(previous_parts: list[str], chunk: str) -> str:
+    """Repair a missing space at an unambiguous streamed sentence boundary."""
+    if not previous_parts or not chunk or chunk[0].isspace():
+        return chunk
+    previous = previous_parts[-1]
+    if previous.endswith((".", "?", "!")) and chunk[0].isupper():
+        return f" {chunk}"
+    return chunk
+
+
+def _session_properties(
+    config: RealtimeProviderConfig, model: str, voice: str, tool_schemas: list[object]
+) -> SessionProperties:
+    """Build the initial OpenAI session.update without unused audio capability."""
+    audio: AudioConfiguration | None = None
+    if "audio" in config.input_modalities or "audio" in config.output_modalities:
+        audio = AudioConfiguration(
+            input=(
+                AudioInput(
+                    transcription=InputAudioTranscription(),
+                    turn_detection=SemanticTurnDetection(),
+                    noise_reduction=InputAudioNoiseReduction(type="near_field"),
+                )
+                if "audio" in config.input_modalities
+                else None
+            ),
+            output=AudioOutput(voice=voice)
+            if "audio" in config.output_modalities
+            else None,
+        )
+    return SessionProperties(
+        model=model,
+        output_modalities=sorted(config.output_modalities),
+        tools=tool_schemas,
+        audio=audio,
+    )
+
+
 def _ready_openai_service(
     service_class,
     ready_event: asyncio.Event,
@@ -89,8 +127,13 @@ def _ready_openai_service(
             # unsolicited additional response.
             if self._context is None:
                 self._context = context
-                self._llm_needs_conversation_setup = False
+                # The generic realtime implementation would create a response
+                # here. External audio turns are server-VAD driven, so do not
+                # create one yet—but do send the context's tool schemas and
+                # system instruction to OpenAI before the first user turn.
                 await self._process_completed_function_calls(send_new_results=False)
+                await self._send_session_update()
+                self._llm_needs_conversation_setup = False
                 return
             await super()._handle_context(context)
 
@@ -129,7 +172,7 @@ class OpenAIRealtimeProvider:
 
     def create_session(self, config: RealtimeProviderConfig) -> AgentSession:
         return OpenAIRealtimeAgentSession(
-            self._api_key, self._model, self._voice, config
+            self._api_key, self._model, config.output_voice or self._voice, config
         )
 
 
@@ -159,6 +202,18 @@ class OpenAIRealtimeAgentSession:
         self._pending_text: dict[str, str] = {}
         self._tool_bridge: PipecatToolBridge | None = None
 
+    @property
+    def effective_profile(self) -> str | None:
+        if self._config.tool_registry is None:
+            return None
+        return self._config.tool_registry.profile_name
+
+    @property
+    def effective_tool_names(self) -> tuple[str, ...]:
+        if self._config.tool_registry is None:
+            return ()
+        return self._config.tool_registry.tool_names
+
     async def start(self) -> None:
         """Start the pre-imported compact Pipecat pipeline."""
         self._source = _PipecatPCMSource(
@@ -166,7 +221,9 @@ class OpenAIRealtimeAgentSession:
         )
         tool_schemas = []
         if self._config.tool_registry is not None:
-            self._tool_bridge = PipecatToolBridge(self._config.tool_registry)
+            self._tool_bridge = PipecatToolBridge(
+                self._config.tool_registry, emit_event=self._events.put
+            )
             tool_schemas = await self._tool_bridge.function_schemas()
         context = LLMContext([], tools=tool_schemas)
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
@@ -180,18 +237,16 @@ class OpenAIRealtimeAgentSession:
             settings=OpenAIRealtimeLLMService.Settings(
                 model=self._model,
                 system_instruction=self._config.system_instruction,
-                session_properties=SessionProperties(
-                    audio=AudioConfiguration(
-                        input=AudioInput(
-                            transcription=InputAudioTranscription(),
-                            turn_detection=SemanticTurnDetection(),
-                            noise_reduction=InputAudioNoiseReduction(type="near_field"),
-                        ),
-                        output=AudioOutput(voice=self._voice),
-                    )
+                session_properties=_session_properties(
+                    self._config, self._model, self._voice, tool_schemas
                 ),
             ),
         )
+        # Text-first turns can reach OpenAI before the first LLMContextFrame.
+        # Synchronize the handler-carrying schemas now through Pipecat's own
+        # schema-managed registration path. This makes handlers available for
+        # the initial session.update without legacy duplicate registration.
+        llm._sync_registered_tool_handlers(tool_schemas)
         self._llm = llm
         worker = PipelineWorker(
             Pipeline(
@@ -313,6 +368,15 @@ class _PipecatEventSink:
                 self._text_parts: list[str] = []
                 self._response_active = False
 
+            async def _ensure_response_started(self) -> None:
+                if self._response_active:
+                    return
+                # OpenAI Realtime can begin the post-tool continuation with a
+                # text/audio frame rather than another LLMFullResponseStartFrame.
+                self._response_active = True
+                self._text_parts = []
+                await events.put(AgentEvent("assistant.response_started"))
+
             async def process_frame(self, frame, direction) -> None:
                 await super().process_frame(frame, direction)
                 if isinstance(frame, StartFrame):
@@ -323,18 +387,18 @@ class _PipecatEventSink:
                     self._response_active = False
                     self._text_parts = []
                 elif isinstance(frame, LLMFullResponseStartFrame):
-                    if not self._response_active:
-                        self._response_active = True
-                        self._text_parts = []
-                        await events.put(AgentEvent("assistant.response_started"))
+                    await self._ensure_response_started()
                 elif isinstance(frame, TextFrame):
+                    await self._ensure_response_started()
                     # Realtime can surface the same output transcript through
                     # more than one provider event. Preserve audio unchanged,
                     # but avoid presenting duplicated adjacent text chunks.
                     if not self._text_parts or self._text_parts[-1] != frame.text:
-                        self._text_parts.append(frame.text)
-                        await events.put(AgentEvent("assistant.text.delta", frame.text))
+                        chunk = _normalize_text_chunk(self._text_parts, frame.text)
+                        self._text_parts.append(chunk)
+                        await events.put(AgentEvent("assistant.text.delta", chunk))
                 elif isinstance(frame, TTSAudioRawFrame):
+                    await self._ensure_response_started()
                     await events.put(
                         AgentEvent(
                             "assistant.audio.chunk",

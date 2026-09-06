@@ -6,7 +6,8 @@ import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Any, Protocol
+from uuid import uuid4
 
 from .agent.session import AgentEvent
 
@@ -40,6 +41,13 @@ class ConversationEvent:
     sample_rate: int | None = None
     channels: int | None = None
     source: str | None = None
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+    tool_arguments: dict[str, Any] | None = None
+    tool_result: list[dict[str, Any]] | None = None
+    tool_arguments_truncated: bool = False
+    tool_result_truncated: bool = False
+    is_error: bool | None = None
 
 
 class ConversationActor:
@@ -54,6 +62,8 @@ class ConversationActor:
         self._response_turn: str | None = None
         self._response_number = 0
         self._active_response_id: str | None = None
+        self._last_response_id: str | None = None
+        self._last_response_turn: str | None = None
         self._accept_response_events = False
         self._used_turn_ids: set[str] = set()
         self._text_received = False
@@ -68,6 +78,14 @@ class ConversationActor:
     @property
     def active_response_id(self) -> str | None:
         return self._active_response_id
+
+    @property
+    def effective_profile(self) -> str | None:
+        return getattr(self._provider, "effective_profile", None)
+
+    @property
+    def effective_tool_names(self) -> tuple[str, ...]:
+        return getattr(self._provider, "effective_tool_names", ())
 
     async def start(self) -> None:
         await self._provider.start()
@@ -133,7 +151,11 @@ class ConversationActor:
             return
         self._closed = True
         try:
-            await asyncio.wait_for(self._provider.close(), timeout=3)
+            # ``asyncio.wait_for`` runs a coroutine in a child task. Streamable
+            # HTTP MCP contexts must exit in the task that entered them, so use
+            # a current-task timeout while retaining the same bounded close.
+            async with asyncio.timeout(3):
+                await self._provider.close()
         except TimeoutError:
             pass
         if self._event_task is not None:
@@ -192,6 +214,30 @@ class ConversationActor:
                         )
                     )
                 return
+            if event.type.startswith("assistant.tool_call_"):
+                turn_id = (
+                    self._response_turn
+                    or self._last_response_turn
+                    or self._last_ended_turn
+                )
+                response_id = self._active_response_id or self._last_response_id
+                if turn_id is None or response_id is None:
+                    return
+                await self._put(
+                    ConversationEvent(
+                        event.type,
+                        turn_id,
+                        response_id=response_id,
+                        tool_call_id=event.tool_call_id or str(uuid4()),
+                        tool_name=event.tool_name,
+                        tool_arguments=event.tool_arguments,
+                        tool_result=event.tool_result,
+                        tool_arguments_truncated=event.tool_arguments_truncated,
+                        tool_result_truncated=event.tool_result_truncated,
+                        is_error=event.is_error,
+                    )
+                )
+                return
             if event.type == "assistant.response_started":
                 if not self._accept_response_events:
                     return
@@ -217,9 +263,14 @@ class ConversationActor:
                 )
             )
             if event.type == "assistant.response_finished":
+                self._last_response_id = self._active_response_id
+                self._last_response_turn = self._response_turn
                 self._active_response_id = None
                 self._response_turn = None
-                self._accept_response_events = False
+                # A Realtime function call may complete after its spoken
+                # preamble and trigger a follow-up response for the same user
+                # turn. Keep that turn eligible until a new input interrupts
+                # it or the session closes.
 
     async def _finish_events(self) -> None:
         if self._events_finished:
