@@ -8,7 +8,7 @@ def test_default_instruction_names_the_assistant_and_requires_silent_home_tools(
     None
 ):
     assert "Your name is Reginold." in DEFAULT_SYSTEM_INSTRUCTION
-    assert "use the available tools silently" in DEFAULT_SYSTEM_INSTRUCTION
+    assert "emit no assistant text or audio" in DEFAULT_SYSTEM_INSTRUCTION
 
 
 def test_fake_provider_creates_isolated_agent_session() -> None:
