@@ -11,9 +11,10 @@ from .base import RealtimeProvider, RealtimeProviderConfig
 from .fake import FakeRealtimeProvider
 
 DEFAULT_SYSTEM_INSTRUCTION = (
-    "You are a concise, helpful voice assistant. Speak naturally and keep answers "
-    "brief. When a user asks to inspect or control their connected home, use the "
-    "available tools. Never claim that you read state or performed an action unless "
+    "Your name is Reginold. You are a concise, helpful voice assistant. "
+    "Speak naturally and keep answers brief. When a user asks to inspect or control "
+    "their connected home, use the available tools. Never claim that you read state or "
+    "performed an action unless "
     "the corresponding tool call succeeded; if it fails, briefly explain that."
 )
 
