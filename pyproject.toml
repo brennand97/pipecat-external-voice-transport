@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pipecat-external-voice-transport"
-version = "0.1.9"
+version = "0.1.10"
 description = "External Transport Protocol v1 server for Voice Satellite"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -73,6 +73,7 @@ def session_start() -> dict[str, object]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.timeout(120)
 async def test_live_realtime_model_calls_read_only_home_assistant_mcp_tool(
     tmp_path,
 ) -> None:
@@ -153,14 +154,23 @@ async def test_live_realtime_model_calls_read_only_home_assistant_mcp_tool(
                 await websocket.send(
                     json.dumps({"type": "turn.end", "turn_id": "tool-turn"})
                 )
-                for _ in range(100):
+                completed_responses = 0
+                deadline = asyncio.get_running_loop().time() + _TIMEOUT_SECONDS
+                while asyncio.get_running_loop().time() < deadline:
+                    remaining = deadline - asyncio.get_running_loop().time()
                     event = json.loads(
-                        await asyncio.wait_for(websocket.recv(), _TIMEOUT_SECONDS)
+                        await asyncio.wait_for(websocket.recv(), timeout=remaining)
                     )
                     if event["type"] == "assistant.response_finished":
-                        break
-                else:
-                    raise AssertionError("live model did not finish its tool response")
+                        completed_responses += 1
+                        # Realtime emits a spoken preamble, then a second
+                        # response after the asynchronous tool result arrives.
+                        if completed_responses == 2:
+                            break
+                if completed_responses != 2:
+                    raise AssertionError(
+                        "live model did not finish its post-tool response"
+                    )
                 await websocket.send(json.dumps({"type": "session.cancel"}))
                 assert (
                     json.loads(await asyncio.wait_for(websocket.recv(), 10))["type"]

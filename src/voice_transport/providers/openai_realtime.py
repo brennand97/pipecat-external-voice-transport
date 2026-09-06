@@ -186,6 +186,10 @@ class OpenAIRealtimeAgentSession:
                 model=self._model,
                 system_instruction=self._config.system_instruction,
                 session_properties=SessionProperties(
+                    # Context frames can arrive after an explicit text turn.
+                    # Put schemas in session properties too so OpenAI receives
+                    # them in the initial session.update for every modality.
+                    tools=tool_schemas,
                     audio=AudioConfiguration(
                         input=AudioInput(
                             transcription=InputAudioTranscription(),
@@ -193,10 +197,18 @@ class OpenAIRealtimeAgentSession:
                             noise_reduction=InputAudioNoiseReduction(type="near_field"),
                         ),
                         output=AudioOutput(voice=self._voice),
-                    )
+                    ),
                 ),
             ),
         )
+        # The model can call a schema from the initial session.update before
+        # the first LLMContextFrame reaches the service. Register handlers now
+        # through Pipecat's public API; context synchronization later keeps
+        # the advertised schema set current without removing these explicit
+        # trusted handlers.
+        for schema in tool_schemas:
+            if schema.handler is not None:
+                llm.register_function(schema.name, schema.handler)
         self._llm = llm
         worker = PipelineWorker(
             Pipeline(
@@ -318,6 +330,15 @@ class _PipecatEventSink:
                 self._text_parts: list[str] = []
                 self._response_active = False
 
+            async def _ensure_response_started(self) -> None:
+                if self._response_active:
+                    return
+                # OpenAI Realtime can begin the post-tool continuation with a
+                # text/audio frame rather than another LLMFullResponseStartFrame.
+                self._response_active = True
+                self._text_parts = []
+                await events.put(AgentEvent("assistant.response_started"))
+
             async def process_frame(self, frame, direction) -> None:
                 await super().process_frame(frame, direction)
                 if isinstance(frame, StartFrame):
@@ -328,11 +349,9 @@ class _PipecatEventSink:
                     self._response_active = False
                     self._text_parts = []
                 elif isinstance(frame, LLMFullResponseStartFrame):
-                    if not self._response_active:
-                        self._response_active = True
-                        self._text_parts = []
-                        await events.put(AgentEvent("assistant.response_started"))
+                    await self._ensure_response_started()
                 elif isinstance(frame, TextFrame):
+                    await self._ensure_response_started()
                     # Realtime can surface the same output transcript through
                     # more than one provider event. Preserve audio unchanged,
                     # but avoid presenting duplicated adjacent text chunks.
@@ -340,6 +359,7 @@ class _PipecatEventSink:
                         self._text_parts.append(frame.text)
                         await events.put(AgentEvent("assistant.text.delta", frame.text))
                 elif isinstance(frame, TTSAudioRawFrame):
+                    await self._ensure_response_started()
                     await events.put(
                         AgentEvent(
                             "assistant.audio.chunk",

@@ -74,6 +74,25 @@ async def test_mcp_tool_call_stays_in_the_calling_task() -> None:
     assert session.task is caller
 
 
+async def test_mcp_provider_reads_current_sdk_snake_case_error_status() -> None:
+    provider = MCPToolProvider(
+        MCPServerConfig(
+            name="home-assistant",
+            transport="streamable_http",
+            url="https://ha.example/api/mcp",
+            allowed_tools=frozenset({"get_state"}),
+        )
+    )
+
+    class Session:
+        async def call_tool(self, _name, _arguments):
+            return SimpleNamespace(content=[], is_error=True)
+
+    provider._session = Session()
+
+    assert await provider.call_tool("get_state", {}) == ToolResult([], is_error=True)
+
+
 async def test_mcp_provider_fails_closed_for_an_invalid_remote_tool_schema() -> None:
     provider = MCPToolProvider(
         MCPServerConfig(

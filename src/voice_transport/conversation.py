@@ -223,7 +223,10 @@ class ConversationActor:
             if event.type == "assistant.response_finished":
                 self._active_response_id = None
                 self._response_turn = None
-                self._accept_response_events = False
+                # A Realtime function call may complete after its spoken
+                # preamble and trigger a follow-up response for the same user
+                # turn. Keep that turn eligible until a new input interrupts
+                # it or the session closes.
 
     async def _finish_events(self) -> None:
         if self._events_finished:

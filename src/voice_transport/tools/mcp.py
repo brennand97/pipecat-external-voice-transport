@@ -77,7 +77,11 @@ class MCPToolProvider:
                 result = await session.call_tool(name, arguments)
         return ToolResult(
             content=[item.model_dump(mode="json") for item in result.content],
-            is_error=bool(result.isError),
+            # MCP SDK v2 uses Pydantic snake_case attributes. Keep a legacy
+            # fallback for compatible older SDK result objects.
+            is_error=bool(
+                getattr(result, "is_error", getattr(result, "isError", False))
+            ),
         )
 
     async def close(self) -> None:

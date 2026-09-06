@@ -92,6 +92,33 @@ async def test_two_sequential_turns_get_distinct_responses() -> None:
     await actor.close()
 
 
+async def test_tool_followup_response_after_initial_response_finish_is_forwarded() -> (
+    None
+):
+    provider = Provider()
+    actor = ConversationActor(provider)
+    await actor.start()
+    events = actor.events()
+    await actor.start_turn("one", TurnInput.TEXT)
+    await actor.submit_text("one", "check the home")
+    await anext(events)  # client text transcript
+    await actor.end_turn("one")
+
+    await provider.events_queue.put(AgentEvent("assistant.response_started"))
+    first = await anext(events)
+    await provider.events_queue.put(AgentEvent("assistant.response_finished"))
+    assert (await anext(events)).response_id == first.response_id
+
+    # Realtime function calls can generate a follow-up response after the
+    # initial spoken preamble has ended and the tool result is available.
+    await provider.events_queue.put(AgentEvent("assistant.response_started"))
+    followup = await anext(events)
+    assert followup.type == "assistant.response_started"
+    assert followup.turn_id == "one"
+    assert followup.response_id != first.response_id
+    await actor.close()
+
+
 async def test_audio_does_not_interrupt_until_provider_detects_speech() -> None:
     provider = Provider()
     actor = ConversationActor(provider)
