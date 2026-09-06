@@ -278,6 +278,21 @@ set +a
 uvicorn voice_transport.app:runtime_app --factory --host 127.0.0.1 --port 8080
 ```
 
+### Opt-in live MCP E2E test
+
+The network-free suite is the default. A separate billable, read-only live test
+proves that a Realtime model receives the configured function schema and calls
+Home Assistant MCP's `homeassistant__GetLiveContext` tool. It is skipped unless
+explicitly enabled and writes only temporary audit files:
+
+```bash
+RUN_LIVE_OPENAI_MCP_TEST=1 \
+OPENAI_API_KEY=... \
+HOMEASSISTANT_MCP_TOKEN=... \
+LIVE_OPENAI_REALTIME_MODEL=gpt-realtime-2.1-mini \
+.venv/bin/pytest -q tests/integration/test_live_openai_mcp.py
+```
+
 Never place provider keys, transport tokens, signing keys, Home Assistant credentials, or signed audio URLs in source control, command output, test fixtures, or bug reports.
 
 ## Validation status
