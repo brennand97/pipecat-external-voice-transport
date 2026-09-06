@@ -42,7 +42,81 @@ class ToolRegistry:
                 content=[{"type": "text", "text": f"Unknown tool: {name}"}],
                 is_error=True,
             )
+        definition = next(tool for tool in self._definitions if tool.name == name)
+        validation_error = _validate_arguments(definition.input_schema, arguments)
+        if validation_error is not None:
+            return ToolResult(
+                content=[
+                    {"type": "text", "text": f"Invalid arguments: {validation_error}"}
+                ],
+                is_error=True,
+            )
         return await provider.call_tool(name, arguments)
 
     async def close(self) -> None:
         await asyncio.gather(*(provider.close() for provider in self.providers))
+
+
+def _validate_arguments(
+    schema: dict[str, Any], arguments: dict[str, Any]
+) -> str | None:
+    """Validate the object-schema subset exposed to the model before I/O.
+
+    MCP servers remain the final authority. This local boundary prevents an LLM
+    from sending clearly malformed calls over the network and returns a useful,
+    retryable tool result instead of converting a model mistake into a session
+    failure.
+    """
+    if not isinstance(arguments, dict):
+        return "arguments must be an object."
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        return "tool schema is not a valid object schema."
+    for key in required:
+        if isinstance(key, str) and key not in arguments:
+            return f"missing required property '{key}'."
+    if schema.get("additionalProperties") is False:
+        for key in arguments:
+            if key not in properties:
+                return f"unknown property '{key}'."
+    for key, value in arguments.items():
+        property_schema = properties.get(key)
+        if not isinstance(property_schema, dict):
+            continue
+        error = _validate_value(key, property_schema, value)
+        if error is not None:
+            return error
+    return None
+
+
+def _validate_value(name: str, schema: dict[str, Any], value: Any) -> str | None:
+    expected = schema.get("type")
+    valid_types = {
+        "string": lambda value: isinstance(value, str),
+        "boolean": lambda value: isinstance(value, bool),
+        "number": lambda value: (
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+        ),
+        "integer": lambda value: isinstance(value, int) and not isinstance(value, bool),
+        "object": lambda value: isinstance(value, dict),
+        "array": lambda value: isinstance(value, list),
+        "null": lambda value: value is None,
+    }
+    if (
+        isinstance(expected, str)
+        and expected in valid_types
+        and not valid_types[expected](value)
+    ):
+        return f"property '{name}' must be a {expected}."
+    allowed = schema.get("enum")
+    if isinstance(allowed, list) and value not in allowed:
+        return f"property '{name}' must be one of the allowed values."
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if isinstance(minimum, (int, float)) and value < minimum:
+            return f"property '{name}' must be >= {minimum}."
+        if isinstance(maximum, (int, float)) and value > maximum:
+            return f"property '{name}' must be <= {maximum}."
+    return None

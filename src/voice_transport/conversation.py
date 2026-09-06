@@ -133,7 +133,11 @@ class ConversationActor:
             return
         self._closed = True
         try:
-            await asyncio.wait_for(self._provider.close(), timeout=3)
+            # ``asyncio.wait_for`` runs a coroutine in a child task. Streamable
+            # HTTP MCP contexts must exit in the task that entered them, so use
+            # a current-task timeout while retaining the same bounded close.
+            async with asyncio.timeout(3):
+                await self._provider.close()
         except TimeoutError:
             pass
         if self._event_task is not None:

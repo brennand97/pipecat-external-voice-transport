@@ -33,6 +33,26 @@ class Provider:
             yield event
 
 
+async def test_close_runs_provider_cleanup_in_the_calling_task() -> None:
+    class TaskBoundProvider(Provider):
+        def __init__(self) -> None:
+            super().__init__()
+            self.close_task: asyncio.Task[object] | None = None
+
+        async def close(self) -> None:
+            self.close_task = asyncio.current_task()
+            await super().close()
+
+    provider = TaskBoundProvider()
+    actor = ConversationActor(provider)
+    await actor.start()
+    caller = asyncio.current_task()
+
+    await actor.close()
+
+    assert provider.close_task is caller
+
+
 async def test_text_turn_interrupts_response_and_echoes_transcript() -> None:
     provider = Provider()
     actor = ConversationActor(provider)

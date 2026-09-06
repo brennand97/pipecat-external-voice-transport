@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import secrets
 import time
 
@@ -24,6 +25,8 @@ from .protocol import (
 )
 from .providers import create_agent_session, prepare_provider
 from .session import Session, SessionRegistry
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def _send_error(
@@ -298,6 +301,19 @@ def create_app(settings: Settings) -> FastAPI:
                 websocket, err, session.start.session_id if session else None
             )
             await websocket.close(code=status.WS_1002_PROTOCOL_ERROR)
+        except Exception:  # noqa: BLE001 - never leak provider/tool internals to clients
+            _LOGGER.exception("Provider session startup or execution failed")
+            if session is not None:
+                session.fail()
+            await _send_error(
+                websocket,
+                ProtocolViolation(
+                    "provider_failure",
+                    "The configured assistant tools are unavailable.",
+                ),
+                session.start.session_id if session else None,
+            )
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
         finally:
             if actor is not None:
                 await actor.close()

@@ -51,11 +51,17 @@ class MCPToolProvider:
     async def list_tools(self) -> list[ToolDefinition]:
         session = await self._session_or_connect()
         result = await session.list_tools()
-        return [
-            ToolDefinition(tool.name, tool.description or "", tool.inputSchema)
-            for tool in result.tools
-            if tool.name in self.config.allowed_tools
-        ]
+        definitions = []
+        for tool in result.tools:
+            if tool.name not in self.config.allowed_tools:
+                continue
+            schema = getattr(tool, "input_schema", None)
+            if not isinstance(schema, dict):
+                raise ValueError(f"MCP tool {tool.name!r} has an invalid input schema")
+            definitions.append(
+                ToolDefinition(tool.name, tool.description or "", schema)
+            )
+        return definitions
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if name not in self.config.allowed_tools:

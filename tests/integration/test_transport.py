@@ -219,6 +219,41 @@ async def test_response_cancel_is_nonterminal_and_revokes_active_audio(
 
 
 @pytest.mark.asyncio
+async def test_tool_startup_failure_returns_sanitized_protocol_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingAgent:
+        async def start(self) -> None:
+            raise ValueError("remote tool schema changed")
+
+        async def close(self) -> None:
+            return None
+
+        async def events(self):
+            yield  # pragma: no cover - start always fails
+
+    monkeypatch.setattr(
+        "voice_transport.app.create_agent_session", lambda _: FailingAgent()
+    )
+    async with running_server(Settings("token")) as (base_url, _app):
+        ws_url = base_url.replace("http", "ws", 1) + "/transport/v1"
+        async with connect(
+            ws_url,
+            additional_headers={"authorization": "Bearer token"},
+            open_timeout=_TIMEOUT_SECONDS,
+            close_timeout=_TIMEOUT_SECONDS,
+        ) as websocket:
+            await websocket.send(json.dumps(start()))
+            error = json.loads(await websocket.recv())
+            assert error == {
+                "type": "error",
+                "code": "provider_failure",
+                "message": "The configured assistant tools are unavailable.",
+                "session_id": "test-session",
+            }
+
+
+@pytest.mark.asyncio
 async def test_signed_audio_endpoint_streams_wav_without_caching() -> None:
     async with running_server(Settings("token")) as (base_url, app):
         stream, token = app.state.audio_store.create(sample_rate=24_000)
