@@ -4,6 +4,10 @@
 | --- | --- | --- |
 | External Transport v1 (development draft) | Implemented server-side | Persistent audio/text turns, native/client transcripts, response correlation, server-owned interruption, non-terminal response cancellation, and signed streaming audio. |
 
+## Session-scoped prompt and voice overrides
+
+`session.start.conversation` may include optional `initial_prompt` and `initial_voice` strings. They replace the deployment's default system instruction and OpenAI voice for that session only; omitted or `null` fields retain the deployment defaults. `initial_prompt` is limited to 16,000 UTF-8 bytes and `initial_voice` to 128 bytes. These values are never retained across sessions.
+
 ## Turn controls
 
 ```json

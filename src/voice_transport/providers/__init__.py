@@ -13,9 +13,10 @@ from .fake import FakeRealtimeProvider
 DEFAULT_SYSTEM_INSTRUCTION = (
     "Your name is Reginold. You are a concise, helpful voice assistant. "
     "Speak naturally and keep answers brief. When a user asks to inspect or control "
-    "their connected home, use the available tools. Never claim that you read state or "
-    "performed an action unless "
-    "the corresponding tool call succeeded; if it fails, briefly explain that."
+    "their connected home, use the available tools silently, then answer directly from "
+    "the successful result; do not narrate checking, pulling, or tool use. Never claim "
+    "that you read state or performed an action unless the corresponding tool call "
+    "succeeded; if it fails, briefly explain that."
 )
 
 
@@ -26,14 +27,20 @@ def prepare_provider(settings: Settings) -> None:
 
 
 def create_agent_session(
-    settings: Settings, *, audit: SessionAuditLog | None = None, session_id: str = ""
+    settings: Settings,
+    *,
+    audit: SessionAuditLog | None = None,
+    session_id: str = "",
+    initial_prompt: str | None = None,
+    initial_voice: str | None = None,
 ) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
     config = RealtimeProviderConfig(
-        system_instruction=DEFAULT_SYSTEM_INSTRUCTION,
+        system_instruction=initial_prompt or DEFAULT_SYSTEM_INSTRUCTION,
         tool_registry=create_tool_registry(
             settings.trusted_tool_config_path, audit=audit, session_id=session_id
         ),
+        output_voice=initial_voice,
     )
     provider: RealtimeProvider
     if settings.realtime_provider == "fake":

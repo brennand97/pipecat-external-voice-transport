@@ -17,6 +17,7 @@ class RealtimeProviderConfig:
     input_sample_rate: int = 16_000
     input_channels: int = 1
     tool_registry: ToolRegistry | None = None
+    output_voice: str | None = None
 
 
 class RealtimeProvider(Protocol):

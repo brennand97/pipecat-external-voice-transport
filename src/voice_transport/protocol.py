@@ -27,6 +27,8 @@ class SessionStart:
     satellite_name: str
     conversation_id: str | None
     wake_word: str | None
+    initial_prompt: str | None = None
+    initial_voice: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +101,8 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
         )
     conversation_id = conversation.get("id")
     wake_word = conversation.get("wake_word")
+    initial_prompt = conversation.get("initial_prompt")
+    initial_voice = conversation.get("initial_voice")
     if conversation_id is not None and not isinstance(conversation_id, str):
         raise ProtocolViolation(
             "invalid_message", "conversation.id must be a string or null."
@@ -107,12 +111,36 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
         raise ProtocolViolation(
             "invalid_message", "conversation.wake_word must be a string or null."
         )
+    if initial_prompt is not None:
+        if not isinstance(initial_prompt, str) or not initial_prompt.strip():
+            raise ProtocolViolation(
+                "invalid_message",
+                "conversation.initial_prompt must be a non-empty string or null.",
+            )
+        if len(initial_prompt.encode()) > 16_000:
+            raise ProtocolViolation(
+                "initial_prompt_too_large",
+                "conversation.initial_prompt exceeds 16,000 bytes.",
+            )
+    if initial_voice is not None:
+        if not isinstance(initial_voice, str) or not initial_voice.strip():
+            raise ProtocolViolation(
+                "invalid_message",
+                "conversation.initial_voice must be a non-empty string or null.",
+            )
+        if len(initial_voice.encode()) > 128:
+            raise ProtocolViolation(
+                "initial_voice_too_large",
+                "conversation.initial_voice exceeds 128 bytes.",
+            )
     return SessionStart(
         session_id=session_id,
         satellite_entity_id=_required_string(satellite, "entity_id"),
         satellite_name=_required_string(satellite, "name"),
         conversation_id=conversation_id,
         wake_word=wake_word,
+        initial_prompt=initial_prompt,
+        initial_voice=initial_voice,
     )
 
 

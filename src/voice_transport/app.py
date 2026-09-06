@@ -233,7 +233,11 @@ def create_app(settings: Settings) -> FastAPI:
                 satellite_name=start.satellite_name,
             )
             agent = create_agent_session(
-                settings, audit=app.state.audit, session_id=start.session_id
+                settings,
+                audit=app.state.audit,
+                session_id=start.session_id,
+                initial_prompt=start.initial_prompt,
+                initial_voice=start.initial_voice,
             )
             actor = ConversationActor(agent)
             await actor.start()

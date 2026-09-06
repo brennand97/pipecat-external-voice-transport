@@ -144,7 +144,7 @@ class OpenAIRealtimeProvider:
 
     def create_session(self, config: RealtimeProviderConfig) -> AgentSession:
         return OpenAIRealtimeAgentSession(
-            self._api_key, self._model, self._voice, config
+            self._api_key, self._model, config.output_voice or self._voice, config
         )
 
 

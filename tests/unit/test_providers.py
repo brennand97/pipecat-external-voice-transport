@@ -4,9 +4,11 @@ from voice_transport.providers import DEFAULT_SYSTEM_INSTRUCTION, create_agent_s
 from voice_transport.providers.openai_realtime import OpenAIRealtimeAgentSession
 
 
-def test_default_instruction_names_the_assistant_and_requires_home_tools() -> None:
+def test_default_instruction_names_the_assistant_and_requires_silent_home_tools() -> (
+    None
+):
     assert "Your name is Reginold." in DEFAULT_SYSTEM_INSTRUCTION
-    assert "use the available tools" in DEFAULT_SYSTEM_INSTRUCTION
+    assert "use the available tools silently" in DEFAULT_SYSTEM_INSTRUCTION
 
 
 def test_fake_provider_creates_isolated_agent_session() -> None:
@@ -20,6 +22,11 @@ def test_openai_provider_creates_isolated_agent_session() -> None:
         openai_api_key="test-key-not-used",
         openai_realtime_voice="cedar",
     )
-    session = create_agent_session(settings)
+    session = create_agent_session(
+        settings,
+        initial_prompt="Reply in one short sentence.",
+        initial_voice="ballad",
+    )
     assert isinstance(session, OpenAIRealtimeAgentSession)
-    assert session._voice == "cedar"
+    assert session._voice == "ballad"
+    assert session._config.system_instruction == "Reply in one short sentence."

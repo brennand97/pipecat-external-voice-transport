@@ -181,7 +181,25 @@ The client authenticates with:
 Authorization: Bearer <EXTERNAL_TRANSPORT_TOKEN>
 ```
 
-It sends `session.start`, waits for `session.ready`, and then submits explicit turns:
+It sends `session.start`, waits for `session.ready`, and then submits explicit turns. A client may optionally override the default OpenAI system instruction and voice for that one session via `conversation.initial_prompt` and `conversation.initial_voice`; neither is persisted or applied to later sessions:
+
+```json
+{
+  "type":"session.start",
+  "protocol_version":1,
+  "session_id":"prompt-test-1",
+  "satellite":{"entity_id":"assist_satellite.kitchen","name":"Kitchen"},
+  "audio":{"encoding":"pcm_s16le","sample_rate":16000,"channels":1},
+  "conversation":{
+    "id":null,
+    "wake_word":null,
+    "initial_prompt":"You are concise. Call home tools silently and state only the result.",
+    "initial_voice":"ballad"
+  }
+}
+```
+
+`initial_prompt` must be a non-empty string up to 16,000 UTF-8 bytes; `initial_voice` must be a non-empty string up to 128 bytes. Omit either field (or supply `null`) to use the deployment default. Then start an audio turn:
 
 ```json
 {"type":"turn.start","turn_id":"turn-1","input":"audio"}
