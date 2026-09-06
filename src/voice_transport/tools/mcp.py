@@ -53,7 +53,7 @@ class MCPToolProvider:
         result = await session.list_tools()
         definitions = []
         for tool in result.tools:
-            if tool.name not in self.config.allowed_tools:
+            if not self._is_allowed(tool.name):
                 continue
             schema = getattr(tool, "input_schema", None)
             if not isinstance(schema, dict):
@@ -64,7 +64,7 @@ class MCPToolProvider:
         return definitions
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
-        if name not in self.config.allowed_tools:
+        if not self._is_allowed(name):
             return ToolResult(
                 content=[{"type": "text", "text": f"Tool is not allowed: {name}"}],
                 is_error=True,
@@ -141,6 +141,12 @@ class MCPToolProvider:
             self._stack = stack
             self._session = session
             return session
+
+    def _is_allowed(self, name: str) -> bool:
+        return any(
+            name.startswith(pattern[:-1]) if pattern.endswith("*") else name == pattern
+            for pattern in self.config.allowed_tools
+        )
 
     def _require_url(self) -> str:
         if not self.config.url:

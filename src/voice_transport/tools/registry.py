@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..session_audit import SessionAuditLog
+from ..session_plan import ToolNamePattern
 from .base import AsyncToolProvider, ToolDefinition, ToolResult
 
 
@@ -17,6 +18,8 @@ class ToolRegistry:
     providers: tuple[AsyncToolProvider, ...]
     audit: SessionAuditLog | None = None
     session_id: str = ""
+    allowed_patterns: tuple[ToolNamePattern, ...] = ()
+    requested_names: frozenset[str] | None = None
     _tools: dict[str, AsyncToolProvider] = field(default_factory=dict)
     _definitions: list[ToolDefinition] = field(default_factory=list)
     _ready: bool = False
@@ -30,6 +33,15 @@ class ToolRegistry:
         discovered = [await provider.list_tools() for provider in self.providers]
         for provider, tools in zip(self.providers, discovered, strict=True):
             for tool in tools:
+                if self.allowed_patterns and not any(
+                    pattern.matches(tool.name) for pattern in self.allowed_patterns
+                ):
+                    continue
+                if (
+                    self.requested_names is not None
+                    and tool.name not in self.requested_names
+                ):
+                    continue
                 if tool.name in self._tools:
                     raise ValueError(f"duplicate tool name: {tool.name}")
                 self._tools[tool.name] = provider

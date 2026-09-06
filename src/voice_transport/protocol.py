@@ -29,6 +29,8 @@ class SessionStart:
     wake_word: str | None
     initial_prompt: str | None = None
     initial_voice: str | None = None
+    tool_profile: str | None = None
+    requested_tools: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +105,8 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
     wake_word = conversation.get("wake_word")
     initial_prompt = conversation.get("initial_prompt")
     initial_voice = conversation.get("initial_voice")
+    tool_profile = conversation.get("profile")
+    requested_tools = conversation.get("requested_tools")
     if conversation_id is not None and not isinstance(conversation_id, str):
         raise ProtocolViolation(
             "invalid_message", "conversation.id must be a string or null."
@@ -111,6 +115,30 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
         raise ProtocolViolation(
             "invalid_message", "conversation.wake_word must be a string or null."
         )
+    if tool_profile is not None and (
+        not isinstance(tool_profile, str)
+        or not tool_profile.strip()
+        or len(tool_profile) > 128
+    ):
+        raise ProtocolViolation(
+            "invalid_message",
+            "conversation.profile must be a short non-empty string or null.",
+        )
+    if requested_tools is not None:
+        if (
+            not isinstance(requested_tools, list)
+            or not requested_tools
+            or len(requested_tools) > 128
+            or not all(
+                isinstance(name, str) and name and "*" not in name
+                for name in requested_tools
+            )
+            or len(set(requested_tools)) != len(requested_tools)
+        ):
+            raise ProtocolViolation(
+                "invalid_message",
+                "conversation.requested_tools must be unique exact names.",
+            )
     if initial_prompt is not None:
         if not isinstance(initial_prompt, str) or not initial_prompt.strip():
             raise ProtocolViolation(
@@ -141,6 +169,8 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
         wake_word=wake_word,
         initial_prompt=initial_prompt,
         initial_voice=initial_voice,
+        tool_profile=tool_profile,
+        requested_tools=tuple(requested_tools) if requested_tools is not None else None,
     )
 
 

@@ -78,9 +78,8 @@ def compile_tool_names(
     """Intersect trusted provider/profile policy with an exact client subset."""
     provider = tuple(provider_patterns)
     discovered = tuple(discovered_names)
-    if (
-        requested_names is not None
-        and len(set(requested_names)) != len(requested_names)
+    if requested_names is not None and len(set(requested_names)) != len(
+        requested_names
     ):
         raise SessionPlanError("requested tool names must be unique")
     selected = tuple(

@@ -39,6 +39,49 @@ def test_tool_config_creates_only_explicit_trusted_providers(tmp_path) -> None:
     assert registry.providers[1].config.command == ("/usr/local/bin/calendar-tool",)
 
 
+def test_named_profile_selects_declared_provider_and_exact_client_subset(
+    tmp_path,
+) -> None:
+    path = tmp_path / "tools.json"
+    path.write_text(
+        json.dumps(
+            {
+                "mcp_servers": [
+                    {
+                        "name": "home",
+                        "transport": "sse",
+                        "url": "https://ha.example/mcp",
+                        "allowed_tools": ["intent__HassTurnOn"],
+                    },
+                    {
+                        "name": "other",
+                        "transport": "sse",
+                        "url": "https://other.example/mcp",
+                        "allowed_tools": ["other"],
+                    },
+                ],
+                "profiles": {
+                    "home-read-only": {
+                        "providers": ["home"],
+                        "allowed_tools": ["intent__Hass*"],
+                    }
+                },
+                "default_profile": "home-read-only",
+            }
+        )
+    )
+
+    registry = create_tool_registry(
+        str(path),
+        profile_name="home-read-only",
+        requested_tools=("intent__HassTurnOn",),
+    )
+
+    assert len(registry.providers) == 1
+    assert registry.requested_names == frozenset({"intent__HassTurnOn"})
+    assert registry.allowed_patterns[0].value == "intent__Hass*"
+
+
 def test_tool_config_resolves_network_bearer_token_only_from_environment(
     tmp_path, monkeypatch
 ) -> None:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..session_audit import SessionAuditLog
+from ..session_plan import SessionPlanError, ToolNamePattern
 from .mcp import MCPServerConfig, MCPToolProvider
 from .registry import ToolRegistry
 from .script import ScriptToolConfig, ScriptToolProvider
@@ -18,7 +19,12 @@ class ToolConfigurationError(ValueError):
 
 
 def create_tool_registry(
-    config_path: str, *, audit: SessionAuditLog | None = None, session_id: str = ""
+    config_path: str,
+    *,
+    audit: SessionAuditLog | None = None,
+    session_id: str = "",
+    profile_name: str | None = None,
+    requested_tools: tuple[str, ...] | None = None,
 ) -> ToolRegistry | None:
     """Create a fresh session-scoped registry from a trusted JSON file.
 
@@ -35,13 +41,99 @@ def create_tool_registry(
         raise ToolConfigurationError("cannot load trusted tool configuration") from err
     if not isinstance(document, dict):
         raise ToolConfigurationError("tool configuration must be an object")
-    _reject_unknown_keys(document, {"mcp_servers", "script_tools"})
+    _reject_unknown_keys(
+        document, {"mcp_servers", "script_tools", "profiles", "default_profile"}
+    )
     mcp_servers = _list(document, "mcp_servers")
     script_tools = _list(document, "script_tools")
-    providers = [MCPToolProvider(_mcp_config(item)) for item in mcp_servers] + [
-        ScriptToolProvider(_script_config(item)) for item in script_tools
+    profiles = _profiles(document, mcp_servers, script_tools)
+    selected_name = (
+        profile_name or _optional_string(document, "default_profile") or "default"
+    )
+    selected = profiles.get(selected_name)
+    if selected is None:
+        raise ToolConfigurationError("unknown tool profile")
+    if requested_tools is not None:
+        if not requested_tools or len(set(requested_tools)) != len(requested_tools):
+            raise ToolConfigurationError(
+                "requested_tools must be a unique non-empty list"
+            )
+        if any("*" in name for name in requested_tools):
+            raise ToolConfigurationError("requested_tools must contain exact names")
+    providers = [
+        MCPToolProvider(_mcp_config(item))
+        for item in mcp_servers
+        if _string(_object(item, "mcp server"), "name") in selected[0]
+    ] + [
+        ScriptToolProvider(_script_config(item))
+        for item in script_tools
+        if _string(_object(item, "script tool"), "name") in selected[0]
     ]
-    return ToolRegistry(tuple(providers), audit=audit, session_id=session_id)
+    return ToolRegistry(
+        tuple(providers),
+        audit=audit,
+        session_id=session_id,
+        allowed_patterns=selected[1],
+        requested_names=frozenset(requested_tools)
+        if requested_tools is not None
+        else None,
+    )
+
+
+def _profiles(
+    document: dict[str, Any], mcp_servers: list[object], script_tools: list[object]
+) -> dict[str, tuple[frozenset[str], tuple[ToolNamePattern, ...]]]:
+    """Parse profiles, or synthesize a restrictive legacy default profile."""
+    raw = document.get("profiles")
+    if raw is None:
+        names = frozenset(
+            [_string(_object(item, "mcp server"), "name") for item in mcp_servers]
+            + [_string(_object(item, "script tool"), "name") for item in script_tools]
+        )
+        allowed = [
+            name
+            for item in mcp_servers
+            for name in _string_list(
+                _object(item, "mcp server").get("allowed_tools", []),
+                "allowed_tools",
+            )
+        ] + [_string(_object(item, "script tool"), "name") for item in script_tools]
+        return {"default": (names, _patterns(allowed, "allowed_tools"))}
+    if not isinstance(raw, dict) or not raw:
+        raise ToolConfigurationError("profiles must be a non-empty object")
+    available = {
+        *(_string(_object(item, "mcp server"), "name") for item in mcp_servers),
+        *(_string(_object(item, "script tool"), "name") for item in script_tools),
+    }
+    profiles: dict[str, tuple[frozenset[str], tuple[ToolNamePattern, ...]]] = {}
+    for name, value in raw.items():
+        if not isinstance(name, str) or not name:
+            raise ToolConfigurationError("profile names must be non-empty strings")
+        item = _object(value, "profile")
+        _reject_unknown_keys(item, {"providers", "allowed_tools"})
+        providers = frozenset(_string_list(item.get("providers"), "providers"))
+        if not providers or not providers <= available:
+            raise ToolConfigurationError("profile references an unknown provider")
+        profiles[name] = (
+            providers,
+            _patterns(
+                _string_list(item.get("allowed_tools"), "allowed_tools"),
+                "allowed_tools",
+            ),
+        )
+    return profiles
+
+
+def _patterns(value: list[str], field: str) -> tuple[ToolNamePattern, ...]:
+    try:
+        patterns = tuple(ToolNamePattern.parse(item) for item in value)
+    except SessionPlanError as err:
+        raise ToolConfigurationError(
+            f"{field} contains an invalid tool pattern"
+        ) from err
+    if not patterns or len({item.value for item in patterns}) != len(patterns):
+        raise ToolConfigurationError(f"{field} must be a unique non-empty list")
+    return patterns
 
 
 def _mcp_config(value: object) -> MCPServerConfig:
@@ -68,11 +160,9 @@ def _mcp_config(value: object) -> MCPServerConfig:
     url = _optional_string(item, "url")
     command = _optional_string(item, "command")
     args = tuple(_string_list(item.get("args", []), "args"))
-    allowed_tools = frozenset(
-        _string_list(item.get("allowed_tools", []), "allowed_tools")
-    )
-    if not allowed_tools:
-        raise ToolConfigurationError("MCP allowed_tools must not be empty")
+    allowed_tool_values = _string_list(item.get("allowed_tools", []), "allowed_tools")
+    _patterns(allowed_tool_values, "allowed_tools")
+    allowed_tools = frozenset(allowed_tool_values)
     if transport == "stdio":
         if not command or url:
             raise ToolConfigurationError(

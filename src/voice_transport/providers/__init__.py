@@ -34,12 +34,18 @@ def create_agent_session(
     session_id: str = "",
     initial_prompt: str | None = None,
     initial_voice: str | None = None,
+    tool_profile: str | None = None,
+    requested_tools: tuple[str, ...] | None = None,
 ) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
     config = RealtimeProviderConfig(
         system_instruction=initial_prompt or DEFAULT_SYSTEM_INSTRUCTION,
         tool_registry=create_tool_registry(
-            settings.trusted_tool_config_path, audit=audit, session_id=session_id
+            settings.trusted_tool_config_path,
+            audit=audit,
+            session_id=session_id,
+            profile_name=tool_profile,
+            requested_tools=requested_tools,
         ),
         output_voice=initial_voice,
     )
