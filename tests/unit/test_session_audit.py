@@ -59,6 +59,17 @@ async def test_debug_content_stores_bounded_audio_with_jsonl_sidecar_pointer(
     assert (tmp_path / entry["audio_file"]).read_bytes() == b"raw"
 
 
+async def test_finish_session_releases_audio_accounting(tmp_path) -> None:
+    audit = SessionAuditLog(tmp_path, mode="debug_content", retention_days=7)
+    await audit.record_audio(
+        "session-1", "input", b"pcm", sample_rate=16_000, channels=1
+    )
+
+    await audit.finish_session("session-1")
+
+    assert audit._audio_bytes == {}
+
+
 async def test_metadata_log_omits_content_but_keeps_correlated_lifecycle(
     tmp_path,
 ) -> None:

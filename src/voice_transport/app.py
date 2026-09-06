@@ -408,6 +408,7 @@ def create_app(settings: Settings) -> FastAPI:
                 await app.state.audit.record(
                     session.start.session_id, "session.finished"
                 )
+                await app.state.audit.finish_session(session.start.session_id)
                 await registry.remove(session.start.session_id)
 
     return app

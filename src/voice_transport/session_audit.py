@@ -135,6 +135,13 @@ class SessionAuditLog:
                 return
             self._audio_bytes[key] = used + len(chunk)
 
+    async def finish_session(self, session_id: str) -> None:
+        """Release bounded in-memory audio accounting after terminal cleanup."""
+        async with self._lock:
+            for key in tuple(self._audio_bytes):
+                if key[0] == session_id:
+                    del self._audio_bytes[key]
+
     async def prune(self, *, now: datetime | None = None) -> None:
         if not self._available:
             return
