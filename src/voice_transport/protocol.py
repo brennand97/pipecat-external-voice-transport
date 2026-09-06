@@ -23,14 +23,19 @@ class ProtocolViolation(ValueError):
 @dataclass(frozen=True, slots=True)
 class SessionStart:
     session_id: str
-    satellite_entity_id: str
-    satellite_name: str
-    conversation_id: str | None
-    wake_word: str | None
+    satellite_entity_id: str | None
+    satellite_name: str | None
+    client_id: str = ""
+    client_kind: str = "satellite"
+    conversation_id: str | None = None
+    wake_word: str | None = None
     initial_prompt: str | None = None
     initial_voice: str | None = None
     tool_profile: str | None = None
     requested_tools: tuple[str, ...] | None = None
+    device_id: str | None = None
+    input_modalities: frozenset[str] = frozenset({"audio", "text"})
+    output_modalities: frozenset[str] = frozenset({"audio", "text"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,10 +94,29 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
             "unsupported_protocol_version", "Only protocol version 1 is supported."
         )
     session_id = _required_string(message, "session_id")
-    satellite = _object(message, "satellite")
+    satellite = message.get("satellite")
+    client = message.get("client")
+    if not isinstance(satellite, dict) and not isinstance(client, dict):
+        raise ProtocolViolation(
+            "invalid_message", "session.start requires satellite or client."
+        )
+    if isinstance(satellite, dict):
+        satellite_entity_id = _required_string(satellite, "entity_id")
+        satellite_name = _required_string(satellite, "name")
+        client_id, client_kind = satellite_entity_id, "satellite"
+    else:
+        satellite_entity_id = satellite_name = None
+        client_id = _required_string(_object(message, "client"), "id")
+        client_kind = _required_string(_object(message, "client"), "kind")
     audio = _object(message, "audio")
     conversation = _object(message, "conversation")
-    if (
+    input_modalities = _modalities(
+        conversation.get("input_modalities"), {"audio", "text"}
+    )
+    output_modalities = _modalities(
+        conversation.get("output_modalities"), {"audio", "text"}
+    )
+    if "audio" in input_modalities and (
         audio.get("encoding") != PCM_ENCODING
         or audio.get("sample_rate") != PCM_SAMPLE_RATE
         or audio.get("channels") != PCM_CHANNELS
@@ -107,6 +131,7 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
     initial_voice = conversation.get("initial_voice")
     tool_profile = conversation.get("profile")
     requested_tools = conversation.get("requested_tools")
+    device_id = conversation.get("device_id")
     if conversation_id is not None and not isinstance(conversation_id, str):
         raise ProtocolViolation(
             "invalid_message", "conversation.id must be a string or null."
@@ -114,6 +139,13 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
     if wake_word is not None and not isinstance(wake_word, str):
         raise ProtocolViolation(
             "invalid_message", "conversation.wake_word must be a string or null."
+        )
+    if device_id is not None and (
+        not isinstance(device_id, str) or not device_id.strip()
+    ):
+        raise ProtocolViolation(
+            "invalid_message",
+            "conversation.device_id must be a non-empty string or null.",
         )
     if tool_profile is not None and (
         not isinstance(tool_profile, str)
@@ -163,14 +195,19 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
             )
     return SessionStart(
         session_id=session_id,
-        satellite_entity_id=_required_string(satellite, "entity_id"),
-        satellite_name=_required_string(satellite, "name"),
+        satellite_entity_id=satellite_entity_id,
+        satellite_name=satellite_name,
+        client_id=client_id,
+        client_kind=client_kind,
         conversation_id=conversation_id,
         wake_word=wake_word,
         initial_prompt=initial_prompt,
         initial_voice=initial_voice,
         tool_profile=tool_profile,
         requested_tools=tuple(requested_tools) if requested_tools is not None else None,
+        device_id=device_id,
+        input_modalities=frozenset(input_modalities),
+        output_modalities=frozenset(output_modalities),
     )
 
 
@@ -225,6 +262,23 @@ def error_message(
     if session_id:
         message["session_id"] = session_id
     return message
+
+
+def _modalities(value: object, default: set[str]) -> set[str]:
+    if value is None:
+        return default
+    if (
+        not isinstance(value, list)
+        or not value
+        or len(value) > 2
+        or not all(
+            isinstance(item, str) and item in {"audio", "text"} for item in value
+        )
+    ):
+        raise ProtocolViolation(
+            "invalid_message", "conversation modalities must be audio and/or text."
+        )
+    return set(value)
 
 
 def _required_string(message: dict[str, Any], key: str) -> str:

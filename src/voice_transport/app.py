@@ -294,6 +294,11 @@ def create_app(settings: Settings) -> FastAPI:
                 if frame.get("type") == "websocket.disconnect":
                     return
                 if frame.get("bytes") is not None:
+                    if "audio" not in session.start.input_modalities:
+                        raise ProtocolViolation(
+                            "unsupported_input_modality",
+                            "Audio input is not enabled for this session.",
+                        )
                     if actor.open_turn_id is None:
                         implicit_turn_number += 1
                         await actor.start_turn(
@@ -312,6 +317,11 @@ def create_app(settings: Settings) -> FastAPI:
                 try:
                     if message_type == "turn.start":
                         turn = parse_turn_start(message)
+                        if turn.input_type not in session.start.input_modalities:
+                            raise ProtocolViolation(
+                                "unsupported_input_modality",
+                                "Turn input is not enabled for this session.",
+                            )
                         await actor.start_turn(turn.turn_id, TurnInput(turn.input_type))
                     elif message_type == "input.text":
                         turn_id, text = parse_input_text(message)

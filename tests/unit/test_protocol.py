@@ -26,6 +26,25 @@ def test_parses_valid_v1_start() -> None:
     assert start.satellite_entity_id == "assist_satellite.kitchen"
 
 
+def test_generic_text_client_has_no_satellite_or_device_context() -> None:
+    message = valid_start()
+    message.pop("satellite")
+    message["client"] = {"id": "conversation.reginold", "kind": "ha_conversation"}
+    message["conversation"] = {
+        "id": "ha-conversation-id",
+        "device_id": None,
+        "input_modalities": ["text"],
+        "output_modalities": ["text"],
+    }
+
+    start = parse_session_start(message)
+
+    assert start.satellite_entity_id is None
+    assert start.client_kind == "ha_conversation"
+    assert start.input_modalities == frozenset({"text"})
+    assert start.output_modalities == frozenset({"text"})
+
+
 def test_optional_initial_prompt_overrides_a_single_session() -> None:
     message = valid_start()
     message["conversation"]["initial_prompt"] = "Answer in a pirate voice."
