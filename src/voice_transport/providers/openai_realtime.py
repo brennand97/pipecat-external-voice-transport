@@ -211,14 +211,11 @@ class OpenAIRealtimeAgentSession:
                 ),
             ),
         )
-        # The model can call a schema from the initial session.update before
-        # the first LLMContextFrame reaches the service. Register handlers now
-        # through Pipecat's public API; context synchronization later keeps
-        # the advertised schema set current without removing these explicit
-        # trusted handlers.
-        for schema in tool_schemas:
-            if schema.handler is not None:
-                llm.register_function(schema.name, schema.handler)
+        # Text-first turns can reach OpenAI before the first LLMContextFrame.
+        # Synchronize the handler-carrying schemas now through Pipecat's own
+        # schema-managed registration path. This makes handlers available for
+        # the initial session.update without legacy duplicate registration.
+        llm._sync_registered_tool_handlers(tool_schemas)
         self._llm = llm
         worker = PipelineWorker(
             Pipeline(
