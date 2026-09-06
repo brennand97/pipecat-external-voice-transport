@@ -89,8 +89,13 @@ def _ready_openai_service(
             # unsolicited additional response.
             if self._context is None:
                 self._context = context
-                self._llm_needs_conversation_setup = False
+                # The generic realtime implementation would create a response
+                # here. External audio turns are server-VAD driven, so do not
+                # create one yet—but do send the context's tool schemas and
+                # system instruction to OpenAI before the first user turn.
                 await self._process_completed_function_calls(send_new_results=False)
+                await self._send_session_update()
+                self._llm_needs_conversation_setup = False
                 return
             await super()._handle_context(context)
 
