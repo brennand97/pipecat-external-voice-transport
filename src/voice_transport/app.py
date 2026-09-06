@@ -199,6 +199,14 @@ def create_app(settings: Settings) -> FastAPI:
                     response["text"] = event.text
                 if event.source is not None:
                     response["source"] = event.source
+                if event.tool_name is not None:
+                    response["tool_name"] = event.tool_name
+                if event.tool_arguments is not None:
+                    response["arguments"] = event.tool_arguments
+                if event.tool_result is not None:
+                    response["result"] = event.tool_result
+                if event.is_error is not None:
+                    response["is_error"] = event.is_error
                 await websocket.send_json(response)
                 if event.type == "assistant.response_finished" and response_id:
                     stream = streams.pop(response_id, None)

@@ -119,6 +119,32 @@ async def test_tool_followup_response_after_initial_response_finish_is_forwarded
     await actor.close()
 
 
+async def test_tool_events_retain_completed_response_correlation() -> None:
+    provider = Provider()
+    actor = ConversationActor(provider)
+    await actor.start()
+    events = actor.events()
+    await actor.start_turn("one", TurnInput.TEXT)
+    await actor.submit_text("one", "check home")
+    await anext(events)
+    await actor.end_turn("one")
+    await provider.events_queue.put(AgentEvent("assistant.response_started"))
+    started = await anext(events)
+    await provider.events_queue.put(AgentEvent("assistant.response_finished"))
+    await anext(events)
+    await provider.events_queue.put(
+        AgentEvent(
+            "assistant.tool_call_started",
+            tool_name="home_context",
+            tool_arguments={},
+        )
+    )
+    tool_started = await anext(events)
+    assert tool_started.response_id == started.response_id
+    assert tool_started.tool_name == "home_context"
+    await actor.close()
+
+
 async def test_audio_does_not_interrupt_until_provider_detects_speech() -> None:
     provider = Provider()
     actor = ConversationActor(provider)

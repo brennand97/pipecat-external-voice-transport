@@ -181,7 +181,9 @@ class OpenAIRealtimeAgentSession:
         )
         tool_schemas = []
         if self._config.tool_registry is not None:
-            self._tool_bridge = PipecatToolBridge(self._config.tool_registry)
+            self._tool_bridge = PipecatToolBridge(
+                self._config.tool_registry, emit_event=self._events.put
+            )
             tool_schemas = await self._tool_bridge.function_schemas()
         context = LLMContext([], tools=tool_schemas)
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)

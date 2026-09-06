@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,6 +16,10 @@ class AgentEvent:
     audio: bytes | None = None
     sample_rate: int | None = None
     channels: int | None = None
+    tool_name: str | None = None
+    tool_arguments: dict[str, Any] | None = None
+    tool_result: list[dict[str, Any]] | None = None
+    is_error: bool | None = None
 
 
 class AgentSession(Protocol):
