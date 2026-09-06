@@ -36,6 +36,8 @@ def create_agent_session(
     initial_voice: str | None = None,
     tool_profile: str | None = None,
     requested_tools: tuple[str, ...] | None = None,
+    input_modalities: frozenset[str] = frozenset({"audio", "text"}),
+    output_modalities: frozenset[str] = frozenset({"audio", "text"}),
 ) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
     config = RealtimeProviderConfig(
@@ -48,6 +50,8 @@ def create_agent_session(
             requested_tools=requested_tools,
         ),
         output_voice=initial_voice,
+        input_modalities=input_modalities,
+        output_modalities=output_modalities,
     )
     provider: RealtimeProvider
     if settings.realtime_provider == "fake":

@@ -18,6 +18,8 @@ class RealtimeProviderConfig:
     input_channels: int = 1
     tool_registry: ToolRegistry | None = None
     output_voice: str | None = None
+    input_modalities: frozenset[str] = frozenset({"audio", "text"})
+    output_modalities: frozenset[str] = frozenset({"audio", "text"})
 
 
 class RealtimeProvider(Protocol):

@@ -254,6 +254,8 @@ def create_app(settings: Settings) -> FastAPI:
                 initial_voice=start.initial_voice,
                 tool_profile=start.tool_profile,
                 requested_tools=start.requested_tools,
+                input_modalities=start.input_modalities,
+                output_modalities=start.output_modalities,
             )
             actor = ConversationActor(agent)
             await actor.start()

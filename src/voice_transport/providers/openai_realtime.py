@@ -74,6 +74,34 @@ def _normalize_text_chunk(previous_parts: list[str], chunk: str) -> str:
     return chunk
 
 
+def _session_properties(
+    config: RealtimeProviderConfig, model: str, voice: str, tool_schemas: list[object]
+) -> SessionProperties:
+    """Build the initial OpenAI session.update without unused audio capability."""
+    audio: AudioConfiguration | None = None
+    if "audio" in config.input_modalities or "audio" in config.output_modalities:
+        audio = AudioConfiguration(
+            input=(
+                AudioInput(
+                    transcription=InputAudioTranscription(),
+                    turn_detection=SemanticTurnDetection(),
+                    noise_reduction=InputAudioNoiseReduction(type="near_field"),
+                )
+                if "audio" in config.input_modalities
+                else None
+            ),
+            output=AudioOutput(voice=voice)
+            if "audio" in config.output_modalities
+            else None,
+        )
+    return SessionProperties(
+        model=model,
+        output_modalities=sorted(config.output_modalities),
+        tools=tool_schemas,
+        audio=audio,
+    )
+
+
 def _ready_openai_service(
     service_class,
     ready_event: asyncio.Event,
@@ -197,19 +225,8 @@ class OpenAIRealtimeAgentSession:
             settings=OpenAIRealtimeLLMService.Settings(
                 model=self._model,
                 system_instruction=self._config.system_instruction,
-                session_properties=SessionProperties(
-                    # Context frames can arrive after an explicit text turn.
-                    # Put schemas in session properties too so OpenAI receives
-                    # them in the initial session.update for every modality.
-                    tools=tool_schemas,
-                    audio=AudioConfiguration(
-                        input=AudioInput(
-                            transcription=InputAudioTranscription(),
-                            turn_detection=SemanticTurnDetection(),
-                            noise_reduction=InputAudioNoiseReduction(type="near_field"),
-                        ),
-                        output=AudioOutput(voice=self._voice),
-                    ),
+                session_properties=_session_properties(
+                    self._config, self._model, self._voice, tool_schemas
                 ),
             ),
         )
