@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
 SessionAuditMode = Literal["off", "metadata", "debug_content"]
+_LOGGER = logging.getLogger(__name__)
 _SENSITIVE_KEY = re.compile(
     r"token|secret|password|authorization|api[_-]?key|cookie", re.I
 )
@@ -26,15 +28,19 @@ class SessionAuditLog:
         self._mode = mode
         self._retention_days = retention_days
         self._lock = asyncio.Lock()
+        self._available = mode != "off"
 
     async def initialize(self) -> None:
-        if self._mode == "off":
+        if not self._available:
             return
-        self._directory.mkdir(parents=True, exist_ok=True)
-        await self.prune()
+        try:
+            self._directory.mkdir(parents=True, exist_ok=True)
+            await self.prune()
+        except OSError as err:
+            self._disable_after_io_failure(err)
 
     async def record(self, session_id: str, event: str, **fields: Any) -> None:
-        if self._mode == "off":
+        if not self._available:
             return
         now = datetime.now(UTC)
         entry: dict[str, Any] = {
@@ -54,16 +60,28 @@ class SessionAuditLog:
             entry[key] = _redact(value, key)
         encoded = json.dumps(entry, separators=(",", ":"), sort_keys=True)
         path = self._directory / f"sessions-{now.date().isoformat()}.jsonl"
-        async with self._lock:
-            await asyncio.to_thread(_append, path, encoded)
+        try:
+            async with self._lock:
+                await asyncio.to_thread(_append, path, encoded)
+        except OSError as err:
+            self._disable_after_io_failure(err)
 
     async def prune(self, *, now: datetime | None = None) -> None:
-        if self._mode == "off":
+        if not self._available:
             return
         now = now or datetime.now(UTC)
         cutoff = now.date() - timedelta(days=self._retention_days)
-        async with self._lock:
-            await asyncio.to_thread(_prune, self._directory, cutoff.isoformat())
+        try:
+            async with self._lock:
+                await asyncio.to_thread(_prune, self._directory, cutoff.isoformat())
+        except OSError as err:
+            self._disable_after_io_failure(err)
+
+    def _disable_after_io_failure(self, err: OSError) -> None:
+        if not self._available:
+            return
+        self._available = False
+        _LOGGER.warning("Audit logging disabled after I/O failure: %s", err)
 
 
 def _append(path: Path, line: str) -> None:
