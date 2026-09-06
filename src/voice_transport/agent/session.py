@@ -16,9 +16,12 @@ class AgentEvent:
     audio: bytes | None = None
     sample_rate: int | None = None
     channels: int | None = None
+    tool_call_id: str | None = None
     tool_name: str | None = None
     tool_arguments: dict[str, Any] | None = None
     tool_result: list[dict[str, Any]] | None = None
+    tool_arguments_truncated: bool = False
+    tool_result_truncated: bool = False
     is_error: bool | None = None
 
 

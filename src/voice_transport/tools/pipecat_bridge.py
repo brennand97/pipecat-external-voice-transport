@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import uuid4
 
 from voice_transport.agent.session import AgentEvent
+from voice_transport.tool_events import public_arguments, public_result
 
 from .registry import ToolRegistry
 
@@ -35,25 +37,33 @@ class PipecatToolBridge:
 
             async def handler(params, tool_name: str = tool.name) -> None:
                 arguments = dict(params.arguments)
+                tool_call_id = str(uuid4())
+                public_args, args_truncated = public_arguments(arguments)
                 if self._emit_event is not None:
                     await self._emit_event(
                         AgentEvent(
                             "assistant.tool_call_started",
+                            tool_call_id=tool_call_id,
                             tool_name=tool_name,
-                            tool_arguments=arguments,
+                            tool_arguments=public_args,
+                            tool_arguments_truncated=args_truncated,
                         )
                     )
                 try:
                     result = await self._registry.call(tool_name, arguments)
                     payload = {"content": result.content, "is_error": result.is_error}
                     await params.result_callback(payload)
+                    public_content, result_truncated = public_result(result.content)
                     if self._emit_event is not None:
                         await self._emit_event(
                             AgentEvent(
                                 "assistant.tool_call_finished",
+                                tool_call_id=tool_call_id,
                                 tool_name=tool_name,
-                                tool_arguments=arguments,
-                                tool_result=result.content,
+                                tool_arguments=public_args,
+                                tool_result=public_content,
+                                tool_arguments_truncated=args_truncated,
+                                tool_result_truncated=result_truncated,
                                 is_error=result.is_error,
                             )
                         )
@@ -67,9 +77,11 @@ class PipecatToolBridge:
                         await self._emit_event(
                             AgentEvent(
                                 "assistant.tool_call_finished",
+                                tool_call_id=tool_call_id,
                                 tool_name=tool_name,
-                                tool_arguments=arguments,
+                                tool_arguments=public_args,
                                 tool_result=payload["content"],
+                                tool_arguments_truncated=args_truncated,
                                 is_error=True,
                             )
                         )

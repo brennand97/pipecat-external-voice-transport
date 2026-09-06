@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
+from uuid import uuid4
 
 from .agent.session import AgentEvent
 
@@ -40,9 +41,12 @@ class ConversationEvent:
     sample_rate: int | None = None
     channels: int | None = None
     source: str | None = None
+    tool_call_id: str | None = None
     tool_name: str | None = None
     tool_arguments: dict[str, Any] | None = None
     tool_result: list[dict[str, Any]] | None = None
+    tool_arguments_truncated: bool = False
+    tool_result_truncated: bool = False
     is_error: bool | None = None
 
 
@@ -216,9 +220,12 @@ class ConversationActor:
                         event.type,
                         turn_id,
                         response_id=response_id,
+                        tool_call_id=event.tool_call_id or str(uuid4()),
                         tool_name=event.tool_name,
                         tool_arguments=event.tool_arguments,
                         tool_result=event.tool_result,
+                        tool_arguments_truncated=event.tool_arguments_truncated,
+                        tool_result_truncated=event.tool_result_truncated,
                         is_error=event.is_error,
                     )
                 )
