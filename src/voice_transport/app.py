@@ -91,6 +91,7 @@ def create_app(settings: Settings) -> FastAPI:
         Path(settings.session_audit_log_path),
         mode=settings.session_audit_mode,  # type: ignore[arg-type]
         retention_days=settings.session_audit_retention_days,
+        max_audio_bytes_per_session=settings.session_audit_max_audio_bytes,
     )
     app.state.ready = True
 
@@ -179,6 +180,15 @@ def create_app(settings: Settings) -> FastAPI:
                             }
                         )
                     try:
+                        await app.state.audit.record_audio(
+                            session.start.session_id,
+                            "output",
+                            event.audio or b"",
+                            sample_rate=event.sample_rate,
+                            channels=event.channels,
+                            turn_id=event.turn_id,
+                            response_id=response_id,
+                        )
                         await stream.write(event.audio or b"")
                     except AudioAccessError:
                         await audio_store.revoke(stream.stream_id)
@@ -315,6 +325,14 @@ def create_app(settings: Settings) -> FastAPI:
                             f"implicit-{implicit_turn_number}", TurnInput.AUDIO
                         )
                     session.add_audio(frame["bytes"], settings.max_audio_frame_bytes)
+                    await app.state.audit.record_audio(
+                        session.start.session_id,
+                        "input",
+                        frame["bytes"],
+                        sample_rate=16_000,
+                        channels=1,
+                        turn_id=actor.open_turn_id,
+                    )
                     await actor.submit_audio(actor.open_turn_id, frame["bytes"])
                     continue
                 if frame.get("text") is None:

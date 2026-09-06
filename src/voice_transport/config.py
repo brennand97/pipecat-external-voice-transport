@@ -35,6 +35,7 @@ class Settings:
     session_audit_mode: str = "off"
     session_audit_log_path: str = ""
     session_audit_retention_days: int = 7
+    session_audit_max_audio_bytes: int = 10_000_000
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -91,6 +92,9 @@ class Settings:
             session_audit_retention_days = int(
                 os.environ.get("SESSION_AUDIT_RETENTION_DAYS", "7")
             )
+            session_audit_max_audio_bytes = int(
+                os.environ.get("SESSION_AUDIT_MAX_AUDIO_BYTES", "10000000")
+            )
         except ValueError as err:
             raise ConfigurationError("transport limits must be numeric") from err
         if session_audit_mode not in {"off", "metadata", "debug_content"}:
@@ -111,6 +115,7 @@ class Settings:
             or max_buffered_output_chunks < 1
             or audio_stream_write_timeout <= 0
             or session_audit_retention_days < 1
+            or session_audit_max_audio_bytes < 1
         ):
             raise ConfigurationError("transport limits are outside safe bounds")
         return cls(
@@ -135,4 +140,5 @@ class Settings:
             session_audit_mode,
             session_audit_log_path,
             session_audit_retention_days,
+            session_audit_max_audio_bytes,
         )

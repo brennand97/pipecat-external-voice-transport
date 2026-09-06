@@ -34,24 +34,29 @@ async def test_debug_content_log_retains_transcript_and_redacts_credentials(
     ]
 
 
-async def test_debug_content_never_records_audio_or_signed_audio_urls(tmp_path) -> None:
-    audit = SessionAuditLog(tmp_path, mode="debug_content", retention_days=7)
+async def test_debug_content_stores_bounded_audio_with_jsonl_sidecar_pointer(
+    tmp_path,
+) -> None:
+    audit = SessionAuditLog(
+        tmp_path, mode="debug_content", retention_days=7, max_audio_bytes_per_session=3
+    )
 
-    await audit.record(
+    await audit.record_audio(
         "session-1",
-        "assistant.audio",
-        audio=b"raw-pcm",
-        pcm=b"raw-pcm",
-        audio_url="https://example/audio?token=signed",
-        signed_audio_url="https://example/audio?signature=signed",
+        "input",
+        b"raw-pcm",
+        sample_rate=16_000,
+        channels=1,
+        turn_id="turn-1",
     )
 
     entry = json.loads(next(tmp_path.glob("sessions-*.jsonl")).read_text())
-    assert entry == {
-        "event": "assistant.audio",
-        "session_id": "session-1",
-        "timestamp": entry["timestamp"],
-    }
+    assert entry["event"] == "debug.audio_captured"
+    assert entry["audio_file"].endswith("-input.pcm")
+    assert entry["turn_id"] == "turn-1"
+    assert entry["bytes"] == 3
+    assert entry["truncated"]
+    assert (tmp_path / entry["audio_file"]).read_bytes() == b"raw"
 
 
 async def test_metadata_log_omits_content_but_keeps_correlated_lifecycle(
