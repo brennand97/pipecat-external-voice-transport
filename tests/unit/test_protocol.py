@@ -5,6 +5,7 @@ from voice_transport.protocol import (
     parse_input_text,
     parse_session_start,
     parse_turn_start,
+    ready_message,
     validate_control,
 )
 
@@ -24,6 +25,20 @@ def test_parses_valid_v1_start() -> None:
     start = parse_session_start(valid_start())
     assert start.session_id == "session-1"
     assert start.satellite_entity_id == "assist_satellite.kitchen"
+
+
+def test_ready_metadata_never_echoes_prompt_content() -> None:
+    ready = ready_message(
+        "session",
+        effective_profile="home",
+        effective_tools=("safe",),
+        effective_voice="ballad",
+    )
+
+    assert ready["effective_profile"] == "home"
+    assert ready["effective_tools"] == ["safe"]
+    assert ready["effective_voice"] == "ballad"
+    assert "initial_prompt" not in ready
 
 
 def test_generic_text_client_has_no_satellite_or_device_context() -> None:

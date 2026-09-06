@@ -202,6 +202,18 @@ class OpenAIRealtimeAgentSession:
         self._pending_text: dict[str, str] = {}
         self._tool_bridge: PipecatToolBridge | None = None
 
+    @property
+    def effective_profile(self) -> str | None:
+        if self._config.tool_registry is None:
+            return None
+        return self._config.tool_registry.profile_name
+
+    @property
+    def effective_tool_names(self) -> tuple[str, ...]:
+        if self._config.tool_registry is None:
+            return ()
+        return self._config.tool_registry.tool_names
+
     async def start(self) -> None:
         """Start the pre-imported compact Pipecat pipeline."""
         self._source = _PipecatPCMSource(

@@ -18,11 +18,17 @@ class ToolRegistry:
     providers: tuple[AsyncToolProvider, ...]
     audit: SessionAuditLog | None = None
     session_id: str = ""
+    profile_name: str = "default"
     allowed_patterns: tuple[ToolNamePattern, ...] = ()
     requested_names: frozenset[str] | None = None
     _tools: dict[str, AsyncToolProvider] = field(default_factory=dict)
     _definitions: list[ToolDefinition] = field(default_factory=list)
     _ready: bool = False
+
+    @property
+    def tool_names(self) -> tuple[str, ...]:
+        """Concrete names selected after session-scoped discovery."""
+        return tuple(tool.name for tool in self._definitions)
 
     async def discover(self) -> list[ToolDefinition]:
         if self._ready:

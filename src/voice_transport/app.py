@@ -260,7 +260,14 @@ def create_app(settings: Settings) -> FastAPI:
             actor = ConversationActor(agent)
             await actor.start()
             session.mark_ready()
-            await websocket.send_json(ready_message(start.session_id))
+            await websocket.send_json(
+                ready_message(
+                    start.session_id,
+                    effective_profile=actor.effective_profile,
+                    effective_tools=actor.effective_tool_names,
+                    effective_voice=start.initial_voice,
+                )
+            )
             writer_task = asyncio.create_task(emit_events())
             started_at = time.monotonic()
 

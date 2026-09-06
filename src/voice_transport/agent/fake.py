@@ -18,6 +18,14 @@ class FakeAgentSession:
         self._text: dict[str, str] = {}
         self.input_bytes = 0
 
+    @property
+    def effective_profile(self) -> str | None:
+        return None
+
+    @property
+    def effective_tool_names(self) -> tuple[str, ...]:
+        return ()
+
     async def start(self) -> None:
         self._started = True
 

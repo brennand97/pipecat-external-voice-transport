@@ -73,6 +73,7 @@ def create_tool_registry(
         tuple(providers),
         audit=audit,
         session_id=session_id,
+        profile_name=selected_name,
         allowed_patterns=selected[1],
         requested_names=frozenset(requested_tools)
         if requested_tools is not None

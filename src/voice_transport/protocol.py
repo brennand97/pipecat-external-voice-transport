@@ -237,8 +237,14 @@ def validate_control(message: dict[str, Any]) -> str:
     return message_type
 
 
-def ready_message(session_id: str) -> dict[str, Any]:
-    return {
+def ready_message(
+    session_id: str,
+    *,
+    effective_profile: str | None = None,
+    effective_tools: tuple[str, ...] = (),
+    effective_voice: str | None = None,
+) -> dict[str, Any]:
+    message: dict[str, Any] = {
         "type": "session.ready",
         "session_id": session_id,
         "capabilities": {
@@ -249,6 +255,12 @@ def ready_message(session_id: str) -> dict[str, Any]:
             "conversation_continuation": True,
         },
     }
+    if effective_profile is not None:
+        message["effective_profile"] = effective_profile
+        message["effective_tools"] = list(effective_tools)
+    if effective_voice is not None:
+        message["effective_voice"] = effective_voice
+    return message
 
 
 def error_message(

@@ -79,6 +79,14 @@ class ConversationActor:
     def active_response_id(self) -> str | None:
         return self._active_response_id
 
+    @property
+    def effective_profile(self) -> str | None:
+        return getattr(self._provider, "effective_profile", None)
+
+    @property
+    def effective_tool_names(self) -> tuple[str, ...]:
+        return getattr(self._provider, "effective_tool_names", ())
+
     async def start(self) -> None:
         await self._provider.start()
         self._event_task = asyncio.create_task(self._pump_provider_events())
