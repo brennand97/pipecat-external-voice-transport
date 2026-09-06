@@ -24,9 +24,10 @@ class ToolRegistry:
     async def discover(self) -> list[ToolDefinition]:
         if self._ready:
             return list(self._definitions)
-        discovered = await asyncio.gather(
-            *(provider.list_tools() for provider in self.providers)
-        )
+        # MCP streamable HTTP contexts are task-affine: discovery opens the
+        # context and later session cleanup closes it. Avoid ``gather()``,
+        # which would enter each context in a child task.
+        discovered = [await provider.list_tools() for provider in self.providers]
         for provider, tools in zip(self.providers, discovered, strict=True):
             for tool in tools:
                 if tool.name in self._tools:

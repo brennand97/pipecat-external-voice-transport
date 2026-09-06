@@ -71,10 +71,10 @@ class MCPToolProvider:
             )
         session = await self._session_or_connect()
         async with self._calls:
-            result = await asyncio.wait_for(
-                session.call_tool(name, arguments),
-                timeout=self.config.request_timeout_seconds,
-            )
+            # Keep streamable HTTP operations in the task that owns its
+            # context; ``wait_for`` would create a child task.
+            async with asyncio.timeout(self.config.request_timeout_seconds):
+                result = await session.call_tool(name, arguments)
         return ToolResult(
             content=[item.model_dump(mode="json") for item in result.content],
             is_error=bool(result.isError),

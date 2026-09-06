@@ -85,9 +85,16 @@ async def test_debug_audit_records_tool_arguments_and_results(tmp_path) -> None:
     assert completed["result"] == [{"text": "ok", "type": "text"}]
 
 
-async def test_registry_closes_providers_in_the_calling_task() -> None:
+async def test_registry_discovers_and_closes_providers_in_the_calling_task() -> None:
     class TaskBoundProvider(RecordingProvider):
+        discover_task = None
         close_task = None
+
+        async def list_tools(self) -> list[ToolDefinition]:
+            import asyncio
+
+            self.discover_task = asyncio.current_task()
+            return await super().list_tools()
 
         async def close(self) -> None:
             import asyncio
@@ -99,8 +106,10 @@ async def test_registry_closes_providers_in_the_calling_task() -> None:
     import asyncio
 
     caller = asyncio.current_task()
+    await registry.discover()
     await registry.close()
 
+    assert provider.discover_task is caller
     assert provider.close_task is caller
 
 
