@@ -22,6 +22,9 @@ class MCPServerConfig:
     command: str | None = None
     args: tuple[str, ...] = ()
     env: dict[str, str] | None = None
+    # Resolved from an administrator-provided environment variable; never
+    # accepted as a literal value in trusted tool configuration.
+    bearer_token: str | None = None
     request_timeout_seconds: float = 15.0
     max_concurrent_calls: int = 2
     allowed_tools: frozenset[str] = frozenset()
@@ -106,8 +109,19 @@ class MCPToolProvider:
                     sse_client(self._require_url())
                 )
             else:
+                http_client = None
+                if self.config.bearer_token:
+                    from httpx2 import AsyncClient
+
+                    http_client = await stack.enter_async_context(
+                        AsyncClient(
+                            headers={
+                                "Authorization": f"Bearer {self.config.bearer_token}"
+                            }
+                        )
+                    )
                 streams = await stack.enter_async_context(
-                    streamable_http_client(self._require_url())
+                    streamable_http_client(self._require_url(), http_client=http_client)
                 )
             read_stream, write_stream = streams
             session = await stack.enter_async_context(

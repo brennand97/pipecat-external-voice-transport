@@ -52,6 +52,7 @@ def _mcp_config(value: object) -> MCPServerConfig:
             "command",
             "args",
             "env_names",
+            "bearer_token_env",
             "allowed_tools",
             "request_timeout_seconds",
             "max_concurrent_calls",
@@ -77,6 +78,16 @@ def _mcp_config(value: object) -> MCPServerConfig:
     elif not url or command:
         raise ToolConfigurationError("network MCP configuration requires url only")
     env = _environment(_string_list(item.get("env_names", []), "env_names"))
+    bearer_token_env = _optional_string(item, "bearer_token_env")
+    if bearer_token_env and transport == "stdio":
+        raise ToolConfigurationError(
+            "bearer_token_env is only supported for network MCP configuration"
+        )
+    bearer_token = (
+        _environment([bearer_token_env]).get(bearer_token_env)
+        if bearer_token_env
+        else None
+    )
     return MCPServerConfig(
         name=name,
         transport=transport,  # type: ignore[arg-type]
@@ -84,6 +95,7 @@ def _mcp_config(value: object) -> MCPServerConfig:
         command=command,
         args=args,
         env=env or None,
+        bearer_token=bearer_token,
         allowed_tools=allowed_tools,
         request_timeout_seconds=_positive_float(item, "request_timeout_seconds", 15.0),
         max_concurrent_calls=_positive_int(item, "max_concurrent_calls", 2),

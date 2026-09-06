@@ -148,7 +148,8 @@ Tools are disabled unless `TRUSTED_TOOL_CONFIG_PATH` names a read-only JSON file
     {
       "name": "home-assistant",
       "transport": "streamable_http",
-      "url": "https://home-assistant.example/mcp",
+      "url": "https://home-assistant.example/api/mcp",
+      "bearer_token_env": "HOMEASSISTANT_MCP_TOKEN",
       "allowed_tools": ["get_state", "set_light"],
       "request_timeout_seconds": 15,
       "max_concurrent_calls": 2
@@ -169,7 +170,7 @@ Security rules:
 
 - MCP tools must appear in a non-empty server-side `allowed_tools` list.
 - Script commands are fixed argv arrays; the model cannot select a command or shell expression.
-- Do not put credentials in this JSON file. For stdio MCP children, `env_names` may copy specifically named variables already injected into the service environment.
+- Do not put credentials in this JSON file. For authenticated network MCP servers, `bearer_token_env` names an environment variable injected into the service; its value is sent only as an HTTP `Authorization: Bearer` header. For stdio MCP children, `env_names` may copy specifically named variables already injected into the service environment.
 - Mount executables and configuration read-only and grant only the permissions required by each tool.
 
 ## Protocol overview
