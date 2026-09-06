@@ -21,8 +21,10 @@ class ToolRegistry:
     profile_name: str = "default"
     allowed_patterns: tuple[ToolNamePattern, ...] = ()
     requested_names: frozenset[str] | None = None
+    context_injections: dict[str, dict[str, str]] = field(default_factory=dict)
     _tools: dict[str, AsyncToolProvider] = field(default_factory=dict)
     _definitions: list[ToolDefinition] = field(default_factory=list)
+    _provider_definitions: dict[str, ToolDefinition] = field(default_factory=dict)
     _ready: bool = False
 
     @property
@@ -51,7 +53,8 @@ class ToolRegistry:
                 if tool.name in self._tools:
                     raise ValueError(f"duplicate tool name: {tool.name}")
                 self._tools[tool.name] = provider
-                self._definitions.append(tool)
+                self._provider_definitions[tool.name] = tool
+                self._definitions.append(self._public_definition(tool))
         self._ready = True
         await self._record(
             "tools.discovered", tools=[tool.name for tool in self._definitions]
@@ -67,8 +70,15 @@ class ToolRegistry:
                 content=[{"type": "text", "text": f"Unknown tool: {name}"}],
                 is_error=True,
             )
-        definition = next(tool for tool in self._definitions if tool.name == name)
-        validation_error = _validate_arguments(definition.input_schema, arguments)
+        definition = self._provider_definitions[name]
+        injected = self.context_injections.get(name, {})
+        if any(key in arguments for key in injected):
+            validation_error = "a context-owned argument was supplied by the model."
+        else:
+            provider_arguments = {**arguments, **injected}
+            validation_error = _validate_arguments(
+                definition.input_schema, provider_arguments
+            )
         if validation_error is not None:
             await self._record(
                 "tool.validation_rejected",
@@ -84,7 +94,7 @@ class ToolRegistry:
             )
         await self._record("tool.call_started", tool_name=name, arguments=arguments)
         try:
-            result = await provider.call_tool(name, arguments)
+            result = await provider.call_tool(name, provider_arguments)
         except Exception as err:
             await self._record(
                 "tool.call_failed", tool_name=name, arguments=arguments, error=str(err)
@@ -98,6 +108,21 @@ class ToolRegistry:
             is_error=result.is_error,
         )
         return result
+
+    def _public_definition(self, definition: ToolDefinition) -> ToolDefinition:
+        hidden = self.context_injections.get(definition.name)
+        if not hidden:
+            return definition
+        schema = dict(definition.input_schema)
+        properties = dict(schema.get("properties", {}))
+        required = list(schema.get("required", []))
+        for argument in hidden:
+            properties.pop(argument, None)
+            if argument in required:
+                required.remove(argument)
+        schema["properties"] = properties
+        schema["required"] = required
+        return ToolDefinition(definition.name, definition.description, schema)
 
     async def close(self) -> None:
         # Streamable HTTP MCP contexts are task-affine. ``gather`` creates a
