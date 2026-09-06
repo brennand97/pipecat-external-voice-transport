@@ -81,7 +81,15 @@ class ToolRegistry:
         return result
 
     async def close(self) -> None:
-        await asyncio.gather(*(provider.close() for provider in self.providers))
+        # Streamable HTTP MCP contexts are task-affine. ``gather`` creates a
+        # child task for each close and triggers AnyIO cancel-scope failures,
+        # so preserve the caller task while retaining a per-provider bound.
+        for provider in self.providers:
+            try:
+                async with asyncio.timeout(3):
+                    await provider.close()
+            except TimeoutError:
+                pass
 
     async def _record(self, event: str, **fields: Any) -> None:
         if self.audit is not None and self.session_id:

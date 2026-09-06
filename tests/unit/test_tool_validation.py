@@ -85,6 +85,25 @@ async def test_debug_audit_records_tool_arguments_and_results(tmp_path) -> None:
     assert completed["result"] == [{"text": "ok", "type": "text"}]
 
 
+async def test_registry_closes_providers_in_the_calling_task() -> None:
+    class TaskBoundProvider(RecordingProvider):
+        close_task = None
+
+        async def close(self) -> None:
+            import asyncio
+
+            self.close_task = asyncio.current_task()
+
+    provider = TaskBoundProvider()
+    registry = ToolRegistry((provider,))
+    import asyncio
+
+    caller = asyncio.current_task()
+    await registry.close()
+
+    assert provider.close_task is caller
+
+
 async def test_registry_forwards_valid_model_arguments() -> None:
     provider = RecordingProvider()
     registry = ToolRegistry((provider,))
