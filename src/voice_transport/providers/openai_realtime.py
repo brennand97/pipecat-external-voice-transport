@@ -64,6 +64,16 @@ def _consume_task_result(task: asyncio.Task) -> None:
         pass
 
 
+def _normalize_text_chunk(previous_parts: list[str], chunk: str) -> str:
+    """Repair a missing space at an unambiguous streamed sentence boundary."""
+    if not previous_parts or not chunk or chunk[0].isspace():
+        return chunk
+    previous = previous_parts[-1]
+    if previous.endswith((".", "?", "!")) and chunk[0].isupper():
+        return f" {chunk}"
+    return chunk
+
+
 def _ready_openai_service(
     service_class,
     ready_event: asyncio.Event,
@@ -356,8 +366,9 @@ class _PipecatEventSink:
                     # more than one provider event. Preserve audio unchanged,
                     # but avoid presenting duplicated adjacent text chunks.
                     if not self._text_parts or self._text_parts[-1] != frame.text:
-                        self._text_parts.append(frame.text)
-                        await events.put(AgentEvent("assistant.text.delta", frame.text))
+                        chunk = _normalize_text_chunk(self._text_parts, frame.text)
+                        self._text_parts.append(chunk)
+                        await events.put(AgentEvent("assistant.text.delta", chunk))
                 elif isinstance(frame, TTSAudioRawFrame):
                     await self._ensure_response_started()
                     await events.put(

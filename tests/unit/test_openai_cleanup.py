@@ -3,6 +3,7 @@ import time
 
 from voice_transport.providers.openai_realtime import (
     _cancel_bounded,
+    _normalize_text_chunk,
     _ready_openai_service,
 )
 
@@ -78,6 +79,19 @@ async def test_initial_context_sends_tools_without_creating_response() -> None:
     assert service._context is context
     assert service._llm_needs_conversation_setup is False
     assert calls == ["process_calls", "session_update"]
+
+
+def test_text_chunk_normalizer_repairs_missing_sentence_space_only() -> None:
+    assert (
+        _normalize_text_chunk(["First sentence."], "Second sentence.")
+        == " Second sentence."
+    )
+    assert (
+        _normalize_text_chunk(["First sentence."], " Second sentence.")
+        == " Second sentence."
+    )
+    assert _normalize_text_chunk(["Version 1."], "5") == "5"
+    assert _normalize_text_chunk(["Mr."], "Smith") == " Smith"
 
 
 async def test_provider_cancellation_is_bounded() -> None:
