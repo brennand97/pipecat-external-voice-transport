@@ -51,6 +51,10 @@ class SessionAuditLog:
         for key, value in fields.items():
             if value is None:
                 continue
+            # Audio is never audit content, including debug_content. Do not
+            # create a future path that can retain PCM, WAV, or signed URLs.
+            if key in {"audio", "pcm", "wav", "audio_url", "signed_audio_url"}:
+                continue
             if self._mode == "metadata" and key in {
                 "transcript",
                 "arguments",

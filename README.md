@@ -162,7 +162,23 @@ Tools are disabled unless `TRUSTED_TOOL_CONFIG_PATH` names a read-only JSON file
       "timeout_seconds": 15,
       "max_concurrent_calls": 2
     }
-  ]
+  ],
+  "profiles": {
+    "home-satellite": {
+      "providers": ["home-assistant"],
+      "allowed_tools": ["intent__Hass*", "voice_satellite__StartTimer"],
+      "context_injections": {
+        "voice_satellite__StartTimer": {
+          "device_id": "home_assistant_device_id"
+        }
+      }
+    },
+    "home-generic": {
+      "providers": ["home-assistant"],
+      "allowed_tools": ["intent__Hass*"]
+    }
+  },
+  "default_profile": "home-generic"
 }
 ```
 
@@ -172,6 +188,9 @@ Security rules:
 - Script commands are fixed argv arrays; the model cannot select a command or shell expression.
 - Do not put credentials in this JSON file. For authenticated network MCP servers, `bearer_token_env` names an environment variable injected into the service; its value is sent only as an HTTP `Authorization: Bearer` header. For stdio MCP children, `env_names` may copy specifically named variables already injected into the service environment.
 - Mount executables and configuration read-only and grant only the permissions required by each tool.
+- Trusted profile/provider allowlists accept exact names or one anchored terminal wildcard, such as `intent__Hass*`. Client `requested_tools` are exact names only.
+- `context_injections` accepts only server-known context sources. `home_assistant_device_id` is available exclusively to physical Satellite attachments. If it is absent, the context-required tool is omitted before discovery and schema advertisement; generic conversation sessions therefore never see `voice_satellite__StartTimer`.
+- The injected provider argument is removed from the model-facing schema, and model attempts to supply it are rejected.
 
 ## Protocol overview
 
@@ -253,8 +272,9 @@ Daily `sessions-YYYY-MM-DD.jsonl` files are pruned after the configured
 retention period. `metadata` records correlated lifecycle IDs, timing, and tool
 outcomes but omits transcript, tool argument, and tool-result content.
 `debug_content` additionally records transcripts and tool arguments/results so
-an operator can reconstruct a conversation and its agent actions. Both modes
-always redact common credential fields and signed URL query strings, but
+an operator can reconstruct a conversation and its agent actions. **No audit
+mode records PCM, WAV, signed audio URLs, or any other audio content.** Both
+modes always redact common credential fields and signed URL query strings, but
 `debug_content` remains sensitive personal/home data and must be enabled only
 for deliberate diagnostics.
 
