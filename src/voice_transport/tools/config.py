@@ -25,6 +25,7 @@ def create_tool_registry(
     session_id: str = "",
     profile_name: str | None = None,
     requested_tools: tuple[str, ...] | None = None,
+    context_values: dict[str, str] | None = None,
 ) -> ToolRegistry | None:
     """Create a fresh session-scoped registry from a trusted JSON file.
 
@@ -69,6 +70,19 @@ def create_tool_registry(
         for item in script_tools
         if _string(_object(item, "script tool"), "name") in selected[0]
     ]
+    context_values = context_values or {}
+    injections: dict[str, dict[str, str]] = {}
+    disabled: set[str] = set()
+    for tool_name, arguments in selected[2].items():
+        resolved: dict[str, str] = {}
+        for argument, source in arguments.items():
+            value = context_values.get(source)
+            if value is None:
+                disabled.add(tool_name)
+                break
+            resolved[argument] = value
+        else:
+            injections[tool_name] = resolved
     return ToolRegistry(
         tuple(providers),
         audit=audit,
@@ -78,12 +92,16 @@ def create_tool_registry(
         requested_names=frozenset(requested_tools)
         if requested_tools is not None
         else None,
+        context_injections=injections,
+        disabled_tool_names=frozenset(disabled),
     )
 
 
 def _profiles(
     document: dict[str, Any], mcp_servers: list[object], script_tools: list[object]
-) -> dict[str, tuple[frozenset[str], tuple[ToolNamePattern, ...]]]:
+) -> dict[
+    str, tuple[frozenset[str], tuple[ToolNamePattern, ...], dict[str, dict[str, str]]]
+]:
     """Parse profiles, or synthesize a restrictive legacy default profile."""
     raw = document.get("profiles")
     if raw is None:
@@ -99,19 +117,22 @@ def _profiles(
                 "allowed_tools",
             )
         ] + [_string(_object(item, "script tool"), "name") for item in script_tools]
-        return {"default": (names, _patterns(allowed, "allowed_tools"))}
+        return {"default": (names, _patterns(allowed, "allowed_tools"), {})}
     if not isinstance(raw, dict) or not raw:
         raise ToolConfigurationError("profiles must be a non-empty object")
     available = {
         *(_string(_object(item, "mcp server"), "name") for item in mcp_servers),
         *(_string(_object(item, "script tool"), "name") for item in script_tools),
     }
-    profiles: dict[str, tuple[frozenset[str], tuple[ToolNamePattern, ...]]] = {}
+    profiles: dict[
+        str,
+        tuple[frozenset[str], tuple[ToolNamePattern, ...], dict[str, dict[str, str]]],
+    ] = {}
     for name, value in raw.items():
         if not isinstance(name, str) or not name:
             raise ToolConfigurationError("profile names must be non-empty strings")
         item = _object(value, "profile")
-        _reject_unknown_keys(item, {"providers", "allowed_tools"})
+        _reject_unknown_keys(item, {"providers", "allowed_tools", "context_injections"})
         providers = frozenset(_string_list(item.get("providers"), "providers"))
         if not providers or not providers <= available:
             raise ToolConfigurationError("profile references an unknown provider")
@@ -121,8 +142,31 @@ def _profiles(
                 _string_list(item.get("allowed_tools"), "allowed_tools"),
                 "allowed_tools",
             ),
+            _context_injections(item.get("context_injections", {})),
         )
     return profiles
+
+
+def _context_injections(value: object) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        raise ToolConfigurationError("context_injections must be an object")
+    parsed: dict[str, dict[str, str]] = {}
+    for tool_name, arguments in value.items():
+        if not isinstance(tool_name, str) or not isinstance(arguments, dict):
+            raise ToolConfigurationError("context_injections is invalid")
+        parsed_arguments: dict[str, str] = {}
+        for argument, source in arguments.items():
+            if (
+                not isinstance(argument, str)
+                or not isinstance(source, str)
+                or source != "home_assistant_device_id"
+            ):
+                raise ToolConfigurationError("context injection source is invalid")
+            parsed_arguments[argument] = source
+        if not parsed_arguments:
+            raise ToolConfigurationError("context injection must not be empty")
+        parsed[tool_name] = parsed_arguments
+    return parsed
 
 
 def _patterns(value: list[str], field: str) -> tuple[ToolNamePattern, ...]:

@@ -22,6 +22,7 @@ class ToolRegistry:
     allowed_patterns: tuple[ToolNamePattern, ...] = ()
     requested_names: frozenset[str] | None = None
     context_injections: dict[str, dict[str, str]] = field(default_factory=dict)
+    disabled_tool_names: frozenset[str] = frozenset()
     _tools: dict[str, AsyncToolProvider] = field(default_factory=dict)
     _definitions: list[ToolDefinition] = field(default_factory=list)
     _provider_definitions: dict[str, ToolDefinition] = field(default_factory=dict)
@@ -41,6 +42,8 @@ class ToolRegistry:
         discovered = [await provider.list_tools() for provider in self.providers]
         for provider, tools in zip(self.providers, discovered, strict=True):
             for tool in tools:
+                if tool.name in self.disabled_tool_names:
+                    continue
                 if self.allowed_patterns and not any(
                     pattern.matches(tool.name) for pattern in self.allowed_patterns
                 ):

@@ -38,6 +38,7 @@ def create_agent_session(
     requested_tools: tuple[str, ...] | None = None,
     input_modalities: frozenset[str] = frozenset({"audio", "text"}),
     output_modalities: frozenset[str] = frozenset({"audio", "text"}),
+    home_assistant_device_id: str | None = None,
 ) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
     config = RealtimeProviderConfig(
@@ -48,6 +49,11 @@ def create_agent_session(
             session_id=session_id,
             profile_name=tool_profile,
             requested_tools=requested_tools,
+            context_values=(
+                {"home_assistant_device_id": home_assistant_device_id}
+                if home_assistant_device_id is not None
+                else None
+            ),
         ),
         output_voice=initial_voice,
         input_modalities=input_modalities,

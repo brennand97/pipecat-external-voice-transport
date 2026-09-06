@@ -256,6 +256,7 @@ def create_app(settings: Settings) -> FastAPI:
                 requested_tools=start.requested_tools,
                 input_modalities=start.input_modalities,
                 output_modalities=start.output_modalities,
+                home_assistant_device_id=start.device_id,
             )
             actor = ConversationActor(agent)
             await actor.start()
