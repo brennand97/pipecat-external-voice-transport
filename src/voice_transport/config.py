@@ -19,24 +19,126 @@ class Settings:
     max_audio_frame_bytes: int = 32_000
     max_input_bytes: int = 9_600_000
     max_buffered_audio_frames: int = 64
+    session_start_timeout_seconds: float = 5.0
+    input_idle_timeout_seconds: float = 20.0
+    max_session_seconds: float = 300.0
+    realtime_provider: str = "fake"
+    openai_api_key: str = ""
+    openai_realtime_model: str = "gpt-realtime-mini"
+    openai_realtime_voice: str = "marin"
+    public_base_url: str = ""
+    audio_url_signing_key: str = ""
+    audio_url_token_ttl_seconds: int = 60
+    max_buffered_output_chunks: int = 64
+    audio_stream_write_timeout_seconds: float = 1.0
+    trusted_tool_config_path: str = ""
+    session_audit_mode: str = "off"
+    session_audit_log_path: str = ""
+    session_audit_retention_days: int = 7
+    session_audit_max_audio_bytes: int = 10_000_000
 
     @classmethod
     def from_environment(cls) -> Settings:
         token = os.environ.get("EXTERNAL_TRANSPORT_TOKEN", "")
         if not token:
             raise ConfigurationError("EXTERNAL_TRANSPORT_TOKEN must be set")
+        realtime_provider = os.environ.get("REALTIME_PROVIDER", "fake")
+        openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+        openai_realtime_model = os.environ.get(
+            "OPENAI_REALTIME_MODEL", "gpt-realtime-mini"
+        )
+        openai_realtime_voice = os.environ.get("OPENAI_REALTIME_VOICE", "marin")
+        if realtime_provider not in {"fake", "openai_realtime"}:
+            raise ConfigurationError("REALTIME_PROVIDER is not supported")
+        if realtime_provider == "openai_realtime" and not openai_api_key:
+            raise ConfigurationError(
+                "OPENAI_API_KEY must be set for the openai_realtime provider"
+            )
+        if not openai_realtime_model:
+            raise ConfigurationError("OPENAI_REALTIME_MODEL must not be empty")
+        if not openai_realtime_voice:
+            raise ConfigurationError("OPENAI_REALTIME_VOICE must not be empty")
+        public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+        audio_url_signing_key = os.environ.get("AUDIO_URL_SIGNING_KEY", "")
+        trusted_tool_config_path = os.environ.get("TRUSTED_TOOL_CONFIG_PATH", "")
+        session_audit_mode = os.environ.get("SESSION_AUDIT_MODE", "off")
+        session_audit_log_path = os.environ.get("SESSION_AUDIT_LOG_PATH", "")
+        if realtime_provider == "openai_realtime" and (
+            not public_base_url or not audio_url_signing_key
+        ):
+            raise ConfigurationError(
+                "PUBLIC_BASE_URL and AUDIO_URL_SIGNING_KEY must be set "
+                "for openai_realtime"
+            )
         try:
             max_sessions = int(os.environ.get("MAX_CONCURRENT_SESSIONS", "2"))
             max_frame = int(os.environ.get("MAX_AUDIO_FRAME_BYTES", "32000"))
             max_input = int(os.environ.get("MAX_INPUT_BYTES", "9600000"))
             max_buffered_frames = int(os.environ.get("MAX_BUFFERED_AUDIO_FRAMES", "64"))
+            session_start_timeout = float(
+                os.environ.get("SESSION_START_TIMEOUT_SECONDS", "5")
+            )
+            input_idle_timeout = float(
+                os.environ.get("INPUT_IDLE_TIMEOUT_SECONDS", "20")
+            )
+            max_session_seconds = float(os.environ.get("MAX_SESSION_SECONDS", "300"))
+            audio_token_ttl = int(os.environ.get("AUDIO_URL_TOKEN_TTL_SECONDS", "60"))
+            max_buffered_output_chunks = int(
+                os.environ.get("MAX_BUFFERED_OUTPUT_CHUNKS", "64")
+            )
+            audio_stream_write_timeout = float(
+                os.environ.get("AUDIO_STREAM_WRITE_TIMEOUT_SECONDS", "1")
+            )
+            session_audit_retention_days = int(
+                os.environ.get("SESSION_AUDIT_RETENTION_DAYS", "7")
+            )
+            session_audit_max_audio_bytes = int(
+                os.environ.get("SESSION_AUDIT_MAX_AUDIO_BYTES", "10000000")
+            )
         except ValueError as err:
-            raise ConfigurationError("transport limits must be integers") from err
+            raise ConfigurationError("transport limits must be numeric") from err
+        if session_audit_mode not in {"off", "metadata", "debug_content"}:
+            raise ConfigurationError("SESSION_AUDIT_MODE is not supported")
+        if session_audit_mode != "off" and not session_audit_log_path:
+            raise ConfigurationError(
+                "SESSION_AUDIT_LOG_PATH must be set when session auditing is enabled"
+            )
         if (
             max_sessions < 1
             or max_frame < 2
             or max_input < max_frame
             or max_buffered_frames < 1
+            or session_start_timeout <= 0
+            or input_idle_timeout <= 0
+            or max_session_seconds <= 0
+            or audio_token_ttl <= 0
+            or max_buffered_output_chunks < 1
+            or audio_stream_write_timeout <= 0
+            or session_audit_retention_days < 1
+            or session_audit_max_audio_bytes < 1
         ):
             raise ConfigurationError("transport limits are outside safe bounds")
-        return cls(token, max_sessions, max_frame, max_input, max_buffered_frames)
+        return cls(
+            token,
+            max_sessions,
+            max_frame,
+            max_input,
+            max_buffered_frames,
+            session_start_timeout,
+            input_idle_timeout,
+            max_session_seconds,
+            realtime_provider,
+            openai_api_key,
+            openai_realtime_model,
+            openai_realtime_voice,
+            public_base_url,
+            audio_url_signing_key,
+            audio_token_ttl,
+            max_buffered_output_chunks,
+            audio_stream_write_timeout,
+            trusted_tool_config_path,
+            session_audit_mode,
+            session_audit_log_path,
+            session_audit_retention_days,
+            session_audit_max_audio_bytes,
+        )

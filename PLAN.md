@@ -281,6 +281,16 @@ Kiosk pre-roll arrives as the first audio frames and does not need a provider-sp
 
 ## 10. Pipecat pipeline
 
+### 10.0 Session boundary
+
+The WebSocket layer is an orchestrator, not a Pipecat transport implementation.
+Each connection creates one isolated provider session with this lifecycle:
+`start()`, `push_audio(pcm)`, `end_input()`, `cancel()`, consume `events()`,
+then `close()`. The Pipecat implementation owns its pipeline, worker, provider
+connection, and feature-specific tasks behind that boundary. A deterministic
+fake implementation uses the same boundary in contract tests.
+
+
 Use Pipecat's OpenAI Realtime service and set the model explicitly. Do not rely on Pipecat's default model because it can change between versions.
 
 Initial model target:
@@ -401,7 +411,24 @@ Maximum session duration: 5 minutes
 Maximum concurrent sessions: 2
 ```
 
-## 15. Home Assistant tools
+## 15. MCP tools (including Home Assistant)
+
+Implement a generic asynchronous tool interface with provider-neutral tool
+schemas, argument validation, and result/error models. Support two adapters:
+MCP is the primary path for Home Assistant and other networked tool servers,
+while custom in-process async tools can be registered directly. Explicitly
+configured JSON-line script tools are also supported as bounded async
+subprocesses with lazy discovery; the model can invoke an exposed tool but
+never select a command. Use an async MCP client dependency with independent
+async connections per server; allow
+parallel discovery and invocation with bounded per-server concurrency and
+per-call timeouts. Home Assistant is configured as an MCP server rather than
+through a bespoke REST client. Pipecat asynchronous function-call handlers are the only model-facing tool
+mechanism: each call dispatches an async adapter coroutine and resolves the
+Pipecat result callback only when complete. Provider adapters receive generic
+tool schemas/results only; the transport/session layer remains unaware of
+individual tool semantics and must never invoke tools directly.
+
 
 ### 15.1 Initial allowlist
 
@@ -426,7 +453,7 @@ Start with narrow tools:
 
 ### 15.3 Safety model
 
-- Enforce allowlists server-side, never only through prompting.
+- Enforce MCP server and tool allowlists server-side, never only through prompting.
 - Validate domains, services, entity IDs, values, and ranges.
 - Add confirmations for consequential actions.
 - Use idempotency keys where possible.

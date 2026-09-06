@@ -1,0 +1,122 @@
+import json
+from datetime import UTC, datetime
+
+import voice_transport.session_audit as session_audit
+from voice_transport.session_audit import SessionAuditLog
+
+
+async def test_debug_content_log_retains_transcript_and_redacts_credentials(
+    tmp_path,
+) -> None:
+    audit = SessionAuditLog(tmp_path, mode="debug_content", retention_days=7)
+
+    await audit.record(
+        "session-1",
+        "tool.completed",
+        transcript="turn on the kitchen light",
+        arguments={"token": "secret", "name": "Kitchen"},
+        result={"url": "https://example/audio?token=signed", "value": "done"},
+    )
+
+    entries = [
+        json.loads(line)
+        for line in next(tmp_path.glob("sessions-*.jsonl")).read_text().splitlines()
+    ]
+    assert entries == [
+        {
+            "arguments": {"name": "Kitchen", "token": "[REDACTED]"},
+            "event": "tool.completed",
+            "result": {"url": "https://example/audio?[REDACTED]", "value": "done"},
+            "session_id": "session-1",
+            "transcript": "turn on the kitchen light",
+            "timestamp": entries[0]["timestamp"],
+        }
+    ]
+
+
+async def test_debug_content_stores_bounded_audio_with_jsonl_sidecar_pointer(
+    tmp_path,
+) -> None:
+    audit = SessionAuditLog(
+        tmp_path, mode="debug_content", retention_days=7, max_audio_bytes_per_session=3
+    )
+
+    await audit.record_audio(
+        "session-1",
+        "input",
+        b"raw-pcm",
+        sample_rate=16_000,
+        channels=1,
+        turn_id="turn-1",
+    )
+
+    entry = json.loads(next(tmp_path.glob("sessions-*.jsonl")).read_text())
+    assert entry["event"] == "debug.audio_captured"
+    assert entry["audio_file"].endswith("-input.pcm")
+    assert entry["turn_id"] == "turn-1"
+    assert entry["bytes"] == 3
+    assert entry["truncated"]
+    assert (tmp_path / entry["audio_file"]).read_bytes() == b"raw"
+
+
+async def test_finish_session_releases_audio_accounting(tmp_path) -> None:
+    audit = SessionAuditLog(tmp_path, mode="debug_content", retention_days=7)
+    await audit.record_audio(
+        "session-1", "input", b"pcm", sample_rate=16_000, channels=1
+    )
+
+    await audit.finish_session("session-1")
+
+    assert audit._audio_bytes == {}
+
+
+async def test_metadata_log_omits_content_but_keeps_correlated_lifecycle(
+    tmp_path,
+) -> None:
+    audit = SessionAuditLog(tmp_path, mode="metadata", retention_days=7)
+
+    await audit.record(
+        "session-1",
+        "user.transcript.final",
+        turn_id="turn-1",
+        transcript="private speech",
+        arguments={"name": "Kitchen"},
+    )
+
+    entry = json.loads(next(tmp_path.glob("sessions-*.jsonl")).read_text())
+    assert entry["session_id"] == "session-1"
+    assert entry["turn_id"] == "turn-1"
+    assert entry["event"] == "user.transcript.final"
+    assert "transcript" not in entry
+    assert "arguments" not in entry
+
+
+async def test_audit_write_failure_disables_auditing_without_failing_session(
+    tmp_path, monkeypatch, caplog
+) -> None:
+    def deny_write(*_args) -> None:
+        raise PermissionError("read-only audit directory")
+
+    monkeypatch.setattr(session_audit, "_append", deny_write)
+    audit = SessionAuditLog(tmp_path, mode="debug_content", retention_days=7)
+
+    await audit.record("session-1", "session.started")
+    await audit.record("session-2", "session.started")
+
+    assert "Audit logging disabled after I/O failure" in caplog.text
+
+
+async def test_prune_removes_only_audit_files_older_than_retention(tmp_path) -> None:
+    old = tmp_path / "sessions-2026-01-01.jsonl"
+    old.write_text("old\n")
+    current = tmp_path / "sessions-2026-01-10.jsonl"
+    current.write_text("current\n")
+    unrelated = tmp_path / "keep.txt"
+    unrelated.write_text("keep\n")
+    audit = SessionAuditLog(tmp_path, mode="metadata", retention_days=7)
+
+    await audit.prune(now=datetime(2026, 1, 10, tzinfo=UTC))
+
+    assert not old.exists()
+    assert current.exists()
+    assert unrelated.exists()
