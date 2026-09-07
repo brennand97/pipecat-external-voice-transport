@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from collections.abc import AsyncIterator
 
 from pipecat.frames.frames import (
@@ -136,6 +138,65 @@ def _ready_openai_service(
                 self._llm_needs_conversation_setup = False
                 return
             await super()._handle_context(context)
+
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self._rate_limit_until = 0.0
+            self._rate_limit_retry_task: asyncio.Task[None] | None = None
+
+        @staticmethod
+        def _retry_after(error: str) -> float | None:
+            if "rate limit" not in error.lower():
+                return None
+            match = re.search(r"try again in ([0-9.]+)s", error, re.IGNORECASE)
+            # A missing retry hint still gets a short, bounded recovery window.
+            return min(max(float(match.group(1)) if match else 1.0, 0.25), 30.0)
+
+        async def _handle_evt_error(self, event) -> None:
+            error = str(event)
+            retry_after = self._retry_after(error)
+            if retry_after is None:
+                await super()._handle_evt_error(event)
+                return
+            self._rate_limit_until = max(
+                self._rate_limit_until, time.monotonic() + retry_after
+            )
+            await events.put(
+                AgentEvent("provider.rate_limited", retry_after_seconds=retry_after)
+            )
+            self._schedule_rate_limit_retry()
+
+        async def _create_response(self) -> None:
+            if time.monotonic() < self._rate_limit_until:
+                self._schedule_rate_limit_retry()
+                return
+            await super()._create_response()
+
+        def _schedule_rate_limit_retry(self) -> None:
+            if (
+                self._rate_limit_retry_task is None
+                or self._rate_limit_retry_task.done()
+            ):
+                self._rate_limit_retry_task = asyncio.create_task(
+                    self._retry_after_rate_limit()
+                )
+
+        async def _retry_after_rate_limit(self) -> None:
+            try:
+                while (remaining := self._rate_limit_until - time.monotonic()) > 0:
+                    await asyncio.sleep(remaining)
+                await super()._create_response()
+            finally:
+                self._rate_limit_retry_task = None
+
+        async def close_rate_limit_retry(self) -> None:
+            task = self._rate_limit_retry_task
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
 
         async def submit_text(self, text: str) -> None:
             # Audio-first realtime sessions don't receive an LLMContextFrame,
@@ -297,6 +358,7 @@ class OpenAIRealtimeAgentSession:
         await self._source.interrupt()
 
     async def cancel(self) -> None:
+        await self._cancel_rate_limit_retry()
         await self._stop_pipeline("external_transport_cancelled")
         if self._tool_bridge is not None:
             await self._tool_bridge.close()
@@ -305,10 +367,15 @@ class OpenAIRealtimeAgentSession:
     async def close(self) -> None:
         if self._closed:
             return
+        await self._cancel_rate_limit_retry()
         await self._stop_pipeline("external_transport_closed")
         if self._tool_bridge is not None:
             await self._tool_bridge.close()
         await self._finish_events()
+
+    async def _cancel_rate_limit_retry(self) -> None:
+        if self._llm is not None:
+            await self._llm.close_rate_limit_retry()
 
     async def _stop_pipeline(self, reason: str) -> None:
         """Stop provider tasks without allowing a remote close to block cleanup."""

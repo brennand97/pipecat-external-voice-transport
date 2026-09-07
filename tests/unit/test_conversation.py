@@ -73,6 +73,28 @@ async def test_text_turn_interrupts_response_and_echoes_transcript() -> None:
     await actor.close()
 
 
+async def test_rate_limit_finishes_current_response_and_keeps_session_open() -> None:
+    provider = Provider()
+    actor = ConversationActor(provider)
+    await actor.start()
+    await actor.start_turn("one", TurnInput.AUDIO)
+    await actor.end_turn("one")
+    events = actor.events()
+    await provider.events_queue.put(AgentEvent("assistant.response_started"))
+    started = await anext(events)
+    await provider.events_queue.put(
+        AgentEvent("provider.rate_limited", retry_after_seconds=2.5)
+    )
+    finished = await anext(events)
+    limited = await anext(events)
+    assert finished.type == "assistant.response_finished"
+    assert finished.response_id == started.response_id
+    assert limited.type == "provider.rate_limited"
+    assert limited.retry_after_seconds == 2.5
+    await actor.start_turn("two", TurnInput.AUDIO)
+    await actor.close()
+
+
 async def test_two_sequential_turns_get_distinct_responses() -> None:
     provider = Provider()
     actor = ConversationActor(provider)

@@ -23,6 +23,7 @@ class AgentEvent:
     tool_arguments_truncated: bool = False
     tool_result_truncated: bool = False
     is_error: bool | None = None
+    retry_after_seconds: float | None = None
 
 
 class AgentSession(Protocol):

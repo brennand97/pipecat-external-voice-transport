@@ -223,6 +223,8 @@ def create_app(settings: Settings) -> FastAPI:
                     response["result_truncated"] = True
                 if event.is_error is not None:
                     response["is_error"] = event.is_error
+                if event.retry_after_seconds is not None:
+                    response["retry_after_seconds"] = event.retry_after_seconds
                 await websocket.send_json(response)
                 if event.type == "assistant.response_finished" and response_id:
                     stream = streams.pop(response_id, None)

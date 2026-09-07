@@ -48,6 +48,7 @@ class ConversationEvent:
     tool_arguments_truncated: bool = False
     tool_result_truncated: bool = False
     is_error: bool | None = None
+    retry_after_seconds: float | None = None
 
 
 class ConversationActor:
@@ -213,6 +214,30 @@ class ConversationActor:
                             source="provider_audio",
                         )
                     )
+                return
+            if event.type == "provider.rate_limited":
+                turn_id = self._response_turn or self._last_ended_turn
+                if turn_id is None:
+                    return
+                response_id = self._active_response_id
+                if response_id is not None:
+                    await self._put(
+                        ConversationEvent(
+                            "assistant.response_finished", turn_id, response_id=response_id
+                        )
+                    )
+                    self._last_response_id = response_id
+                    self._last_response_turn = turn_id
+                    self._active_response_id = None
+                    self._response_turn = None
+                await self._put(
+                    ConversationEvent(
+                        "provider.rate_limited",
+                        turn_id,
+                        response_id=response_id,
+                        retry_after_seconds=event.retry_after_seconds,
+                    )
+                )
                 return
             if event.type.startswith("assistant.tool_call_"):
                 turn_id = (
