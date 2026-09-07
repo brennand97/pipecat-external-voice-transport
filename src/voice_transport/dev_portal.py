@@ -102,7 +102,7 @@ def index_page(
     )
     body = (
         "<h1>Voice Transport developer portal</h1>"
-        "<p>Bearer authentication is required. "
+        "<p>HTTP Basic authentication is required. "
         "This page contains development audit data.</p>"
         "<h2>Trusted tool configuration</h2>"
         f"<pre>{html.escape(config)}</pre>"
@@ -115,6 +115,14 @@ def index_page(
 
 
 def detail_page(session_id: str, events: list[dict[str, Any]]) -> HTMLResponse:
+    event_types = sorted(
+        {str(event.get("event", "")) for event in events if event.get("event")}
+    )
+    options = "".join(
+        f"<option value='{html.escape(event_type, quote=True)}' selected>"
+        f"{html.escape(event_type)}</option>"
+        for event_type in event_types
+    )
     rows: list[str] = []
     for index, event in enumerate(events):
         detail = {
@@ -138,7 +146,7 @@ def detail_page(session_id: str, events: list[dict[str, Any]]) -> HTMLResponse:
             elif is_new_run:
                 audio = "<em>Legacy audio event: offset unavailable.</em>"
         rows.append(
-            "<tr>"
+            f"<tr data-event='{html.escape(str(event.get('event', '')), quote=True)}'>"
             f"<td>{html.escape(str(event.get('timestamp', '')))}</td>"
             f"<td>{html.escape(str(event.get('event', '')))}</td>"
             f"<td><pre>{html.escape(json.dumps(detail, indent=2, sort_keys=True))}"
@@ -148,8 +156,33 @@ def detail_page(session_id: str, events: list[dict[str, Any]]) -> HTMLResponse:
     body = (
         "<p><a href='/dev'>&larr; sessions</a></p>"
         f"<h1>Session {html.escape(session_id)}</h1>"
-        "<table><tr><th>Timestamp</th><th>Event</th><th>Data</th><th>Audio</th></tr>"
-        f"{''.join(rows) or '<tr><td colspan=4>No events.</td></tr>'}</table>"
+        "<section class='filters' aria-label='Timeline filters'>"
+        "<label>Search <input id='timeline-search' type='search' "
+        "placeholder='Search event data'></label>"
+        "<label>Event types <select id='event-types' multiple size='8'>"
+        f"{options}</select></label>"
+        "<button id='clear-filters' type='button'>Clear filters</button>"
+        "<output id='filter-count'></output></section>"
+        "<table><thead><tr><th>Timestamp</th><th>Event</th><th>Data</th>"
+        "<th>Audio</th></tr></thead><tbody id='timeline-events'>"
+        f"{''.join(rows) or '<tr><td colspan=4>No events.</td></tr>'}"
+        "</tbody></table><script>"
+        "(()=>{const q=document.querySelector('#timeline-search'),"
+        "types=document.querySelector('#event-types'),"
+        "rows=[...document.querySelectorAll('#timeline-events tr[data-event]')],"
+        "count=document.querySelector('#filter-count');"
+        "const apply=()=>{const selected=new Set([...types.selectedOptions]"
+        ".map(option=>option.value)),query=q.value.trim().toLowerCase();"
+        "let visible=0;for(const row of rows){const matchType="
+        "selected.has(row.dataset.event),matchText=!query||"
+        "row.textContent.toLowerCase().includes(query);"
+        "row.hidden=!(matchType&&matchText);if(!row.hidden)visible++;}"
+        "count.textContent=`${visible} of ${rows.length} events shown`;};"
+        "q.addEventListener('input',apply);types.addEventListener('change',apply);"
+        "document.querySelector('#clear-filters').addEventListener('click',()=>{"
+        "q.value='';for(const option of types.options)option.selected=true;"
+        "apply();});apply();})();"
+        "</script>"
     )
     return HTMLResponse(_document(body))
 
@@ -216,6 +249,9 @@ def _document(body: str) -> str:
         "<style>body{font:14px sans-serif;margin:2rem}"
         "table{border-collapse:collapse;width:100%}"
         "th,td{border:1px solid #bbb;padding:.4rem;text-align:left;vertical-align:top}"
-        "pre{white-space:pre-wrap;max-width:80rem;margin:0}</style></head><body>"
+        "pre{white-space:pre-wrap;max-width:80rem;margin:0}"
+        ".filters{display:flex;gap:1rem;align-items:start;margin:1rem 0}"
+        ".filters label{display:grid;gap:.3rem}.filters select{min-width:16rem}"
+        "tr[hidden]{display:none}</style></head><body>"
         f"{body}</body></html>"
     )
