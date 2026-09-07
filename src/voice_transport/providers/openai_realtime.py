@@ -85,7 +85,11 @@ def _session_properties(
         audio = AudioConfiguration(
             input=(
                 AudioInput(
-                    transcription=InputAudioTranscription(),
+                    # The deployed Satellites are English-only. Avoid language
+                    # auto-detection occasionally rendering an English command
+                    # in another script while Realtime still performs the
+                    # correct audio-domain tool action.
+                    transcription=InputAudioTranscription(language="en"),
                     turn_detection=SemanticTurnDetection(),
                     noise_reduction=InputAudioNoiseReduction(type="near_field"),
                 )

@@ -32,4 +32,5 @@ def test_satellite_session_configures_input_transcription_and_output_voice() -> 
 
     assert properties.output_modalities == ["audio", "text"]
     assert properties.audio.input.transcription is not None
+    assert properties.audio.input.transcription.language == "en"
     assert properties.audio.output.voice == "marin"
