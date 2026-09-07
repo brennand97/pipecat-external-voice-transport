@@ -223,7 +223,9 @@ class ConversationActor:
                 if response_id is not None:
                     await self._put(
                         ConversationEvent(
-                            "assistant.response_finished", turn_id, response_id=response_id
+                            "assistant.response_finished",
+                            turn_id,
+                            response_id=response_id,
                         )
                     )
                     self._last_response_id = response_id

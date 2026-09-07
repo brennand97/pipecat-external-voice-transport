@@ -101,10 +101,12 @@ class MCPToolProvider:
             await stack.aclose()
         except BaseExceptionGroup as err:
             _handled, remainder = err.split(
-                lambda item: isinstance(item, RuntimeError) and "cancel scope" in str(item)
+                lambda item: (
+                    isinstance(item, RuntimeError) and "cancel scope" in str(item)
+                )
             )
             if remainder is not None:
-                raise remainder
+                raise remainder from err
         except RuntimeError as err:
             if "cancel scope" not in str(err):
                 raise
