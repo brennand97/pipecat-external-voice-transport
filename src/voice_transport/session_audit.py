@@ -119,6 +119,7 @@ class SessionAuditLog:
                 "sample_rate": sample_rate,
                 "channels": channels,
                 "bytes": len(chunk),
+                "offset_bytes": used,
                 "cumulative_bytes": used + len(chunk),
                 "truncated": len(chunk) != len(pcm),
             }

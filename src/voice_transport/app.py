@@ -8,12 +8,28 @@ import secrets
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 
 from .audio_output import AudioAccessError, AudioStream, AudioStreamStore
 from .config import Settings
 from .conversation import ConversationActor, ConversationError, TurnInput
+from .dev_portal import (
+    detail_page,
+    index_page,
+    load_events,
+    require_bearer,
+    sessions_by_recency,
+    set_dev_cookie,
+    wav_clip,
+)
 from .protocol import (
     ProtocolViolation,
     error_message,
@@ -98,6 +114,46 @@ def create_app(settings: Settings) -> FastAPI:
         max_audio_bytes_per_session=settings.session_audit_max_audio_bytes,
     )
     app.state.ready = True
+
+    async def _dev_events() -> list[dict[str, object]]:
+        return await load_events(Path(settings.session_audit_log_path))
+
+    def _dev_config() -> str:
+        if not settings.trusted_tool_config_path:
+            return "No TRUSTED_TOOL_CONFIG_PATH is configured."
+        try:
+            return Path(settings.trusted_tool_config_path).read_text(encoding="utf-8")
+        except OSError:
+            return "Trusted tool configuration is unavailable."
+
+    @app.get("/dev")
+    async def developer_portal(request: Request) -> HTMLResponse:
+        require_bearer(request, settings.transport_token)
+        response = index_page(_dev_config(), sessions_by_recency(await _dev_events()))
+        set_dev_cookie(response, request, settings.transport_token)
+        return response
+
+    @app.get("/dev/sessions/{session_id}")
+    async def developer_session(request: Request, session_id: str) -> HTMLResponse:
+        require_bearer(request, settings.transport_token)
+        events = [
+            event for event in await _dev_events() if event["session_id"] == session_id
+        ]
+        if not events:
+            raise HTTPException(status_code=404, detail="Audit session not found.")
+        return detail_page(session_id, events)
+
+    @app.get("/dev/sessions/{session_id}/audio/{event_index}")
+    async def developer_audio(
+        request: Request, session_id: str, event_index: int
+    ) -> Response:
+        require_bearer(request, settings.transport_token)
+        events = [
+            event for event in await _dev_events() if event["session_id"] == session_id
+        ]
+        if event_index < 0 or event_index >= len(events):
+            raise HTTPException(status_code=404, detail="Audio event not found.")
+        return wav_clip(Path(settings.session_audit_log_path), events[event_index])
 
     @app.get("/health")
     async def health() -> dict[str, str]:

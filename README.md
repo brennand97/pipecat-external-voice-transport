@@ -284,8 +284,23 @@ are retained instead. Each `debug.audio_captured` JSONL event points to a
 relative `.pcm` filename and carries `session_id`, `turn_id`, output
 `response_id`, timestamp, format, and byte-range correlation. Sidecars are
 16-bit little-endian PCM; use the event's sample rate/channels when replaying.
-They are capped by `SESSION_AUDIT_MAX_AUDIO_BYTES` per session and direction,
-never exposed to a browser, and pruned with the normal audit retention policy.
+They are capped by `SESSION_AUDIT_MAX_AUDIO_BYTES` per session and direction
+and pruned with the normal audit retention policy.
+
+### Developer audit portal
+
+`GET /dev` is a deliberately minimal, server-rendered development portal. It
+shows the trusted tool configuration and audit sessions newest first; selecting
+a session shows its ordered events. New `debug.audio_captured` events include a
+byte offset, allowing each PCM event to be served as an individual WAV clip in
+the timeline.
+
+The portal and clips require the transport bearer in an `Authorization: Bearer`
+header (not a query parameter). A header-authenticated `/dev` request receives
+a strict, HttpOnly `/dev` cookie so browser audio elements can retrieve clips.
+Only expose this path on a trusted developer network; it can reveal sensitive
+`debug_content` audit data. Older audit events without `offset_bytes` remain
+visible but cannot be played as individual clips.
 
 To roll back, set `IMAGE_TAG` to the prior tested tag and run:
 
