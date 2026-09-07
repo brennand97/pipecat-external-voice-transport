@@ -38,6 +38,7 @@ class Settings:
     session_audit_max_audio_bytes: int = 10_000_000
     dev_portal_username: str = ""
     dev_portal_password: str = ""
+    openai_input_transcription_language: str = "en"
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -50,6 +51,9 @@ class Settings:
             "OPENAI_REALTIME_MODEL", "gpt-realtime-mini"
         )
         openai_realtime_voice = os.environ.get("OPENAI_REALTIME_VOICE", "marin")
+        transcription_language = os.environ.get(
+            "OPENAI_INPUT_TRANSCRIPTION_LANGUAGE", "en"
+        ).strip()
         if realtime_provider not in {"fake", "openai_realtime"}:
             raise ConfigurationError("REALTIME_PROVIDER is not supported")
         if realtime_provider == "openai_realtime" and not openai_api_key:
@@ -60,6 +64,11 @@ class Settings:
             raise ConfigurationError("OPENAI_REALTIME_MODEL must not be empty")
         if not openai_realtime_voice:
             raise ConfigurationError("OPENAI_REALTIME_VOICE must not be empty")
+        if not transcription_language or len(transcription_language) > 32:
+            raise ConfigurationError(
+                "OPENAI_INPUT_TRANSCRIPTION_LANGUAGE must be a short "
+                "non-empty language tag"
+            )
         public_base_url = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
         audio_url_signing_key = os.environ.get("AUDIO_URL_SIGNING_KEY", "")
         trusted_tool_config_path = os.environ.get("TRUSTED_TOOL_CONFIG_PATH", "")
@@ -151,4 +160,5 @@ class Settings:
             session_audit_max_audio_bytes,
             dev_portal_username,
             dev_portal_password,
+            transcription_language,
         )

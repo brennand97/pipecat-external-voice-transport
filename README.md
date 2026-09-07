@@ -118,6 +118,7 @@ All runtime settings are environment variables.
 | `OPENAI_API_KEY` | — | Required for `openai_realtime`. |
 | `OPENAI_REALTIME_MODEL` | `gpt-realtime-mini` | Explicit Realtime model. |
 | `OPENAI_REALTIME_VOICE` | `marin` | OpenAI Realtime output voice. Select a voice supported by the configured model. |
+| `OPENAI_INPUT_TRANSCRIPTION_LANGUAGE` | `en` | BCP-47 input-transcription language hint for Satellite audio. |
 | `PUBLIC_BASE_URL` | — | Required for OpenAI mode; public HTTPS origin used in audio URLs. |
 | `AUDIO_URL_SIGNING_KEY` | — | Required for OpenAI mode; separate secret for audio capabilities. |
 | `AUDIO_URL_TOKEN_TTL_SECONDS` | `60` | Lifetime of a signed audio capability. |

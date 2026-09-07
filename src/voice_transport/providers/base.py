@@ -20,6 +20,7 @@ class RealtimeProviderConfig:
     output_voice: str | None = None
     input_modalities: frozenset[str] = frozenset({"audio", "text"})
     output_modalities: frozenset[str] = frozenset({"audio", "text"})
+    input_transcription_language: str = "en"
 
 
 class RealtimeProvider(Protocol):

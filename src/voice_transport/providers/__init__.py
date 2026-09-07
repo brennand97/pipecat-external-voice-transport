@@ -58,6 +58,7 @@ def create_agent_session(
         output_voice=initial_voice,
         input_modalities=input_modalities,
         output_modalities=output_modalities,
+        input_transcription_language=settings.openai_input_transcription_language,
     )
     provider: RealtimeProvider
     if settings.realtime_provider == "fake":

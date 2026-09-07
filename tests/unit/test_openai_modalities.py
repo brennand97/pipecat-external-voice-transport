@@ -34,3 +34,16 @@ def test_satellite_session_configures_input_transcription_and_output_voice() -> 
     assert properties.audio.input.transcription is not None
     assert properties.audio.input.transcription.language == "en"
     assert properties.audio.output.voice == "marin"
+
+
+def test_satellite_session_allows_a_configured_transcription_language() -> None:
+    properties = _session_properties(
+        RealtimeProviderConfig(
+            system_instruction="Brief.", input_transcription_language="es"
+        ),
+        "gpt-realtime-mini",
+        "marin",
+        [],
+    )
+
+    assert properties.audio.input.transcription.language == "es"
