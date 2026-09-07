@@ -85,10 +85,23 @@ class MCPToolProvider:
         )
 
     async def close(self) -> None:
-        if self._stack is not None:
-            await self._stack.aclose()
-            self._stack = None
-            self._session = None
+        """Close provider resources without letting SDK teardown break a session.
+
+        streamable_http_client may raise this AnyIO cancel-scope RuntimeError
+        when an ASGI disconnect cancels the task that owns its context. The
+        connection is already being torn down; propagate other failures but
+        treat that specific SDK cleanup defect as best-effort completion.
+        """
+        stack = self._stack
+        self._stack = None
+        self._session = None
+        if stack is None:
+            return
+        try:
+            await stack.aclose()
+        except RuntimeError as err:
+            if "cancel scope" not in str(err):
+                raise
 
     async def _session_or_connect(self):
         if self._session is not None:
