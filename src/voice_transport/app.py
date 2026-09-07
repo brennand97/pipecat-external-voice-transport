@@ -34,7 +34,11 @@ _LOGGER = logging.getLogger(__name__)
 async def _send_error(
     websocket: WebSocket, error: ProtocolViolation, session_id: str | None = None
 ) -> None:
-    await websocket.send_json(error_message(error, session_id))
+    """Attempt a protocol error response unless the peer already disconnected."""
+    try:
+        await websocket.send_json(error_message(error, session_id))
+    except WebSocketDisconnect:
+        pass
 
 
 async def _expire_audio_stream(audio_store: AudioStreamStore, stream_id: str) -> None:
@@ -407,10 +411,15 @@ def create_app(settings: Settings) -> FastAPI:
             for task in tuple(expiry_tasks):
                 await _cancel_task(task)
             if session is not None:
-                await app.state.audit.record(
-                    session.start.session_id, "session.finished"
-                )
-                await app.state.audit.finish_session(session.start.session_id)
+                try:
+                    await app.state.audit.record(
+                        session.start.session_id, "session.finished"
+                    )
+                    await app.state.audit.finish_session(session.start.session_id)
+                except asyncio.CancelledError:
+                    # The peer has gone away; do not turn best-effort audit
+                    # finalization into an ASGI exception.
+                    pass
                 await registry.remove(session.start.session_id)
 
     return app

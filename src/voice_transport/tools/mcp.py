@@ -99,6 +99,11 @@ class MCPToolProvider:
             return
         try:
             await stack.aclose()
+        except asyncio.CancelledError:
+            # On a disconnected ASGI request the SDK's optional HTTP DELETE
+            # cannot complete. The underlying transport is already gone, so
+            # leave teardown best-effort rather than fail the WebSocket task.
+            return
         except BaseExceptionGroup as err:
             _handled, remainder = err.split(
                 lambda item: (

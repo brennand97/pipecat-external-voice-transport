@@ -137,7 +137,13 @@ def _ready_openai_service(
                 await self._send_session_update()
                 self._llm_needs_conversation_setup = False
                 return
-            await super()._handle_context(context)
+            # The local mirror is deliberately empty for audio-first turns.
+            # Pipecat's base implementation uses truthiness to identify its
+            # initial context, so delegating here would misclassify that empty
+            # mirror and suppress completed function results. Updated contexts
+            # must always return newly completed tool calls to OpenAI.
+            self._context = context
+            await self._process_completed_function_calls(send_new_results=True)
 
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
