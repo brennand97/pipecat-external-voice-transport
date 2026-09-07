@@ -295,12 +295,19 @@ a session shows its ordered events. New `debug.audio_captured` events include a
 byte offset, allowing each PCM event to be served as an individual WAV clip in
 the timeline.
 
-The portal and clips require the transport bearer in an `Authorization: Bearer`
-header (not a query parameter). A header-authenticated `/dev` request receives
-a strict, HttpOnly `/dev` cookie so browser audio elements can retrieve clips.
-Only expose this path on a trusted developer network; it can reveal sensitive
-`debug_content` audit data. Older audit events without `offset_bytes` remain
-visible but cannot be played as individual clips.
+The portal is disabled by default. Enable it with separate Basic-auth
+credentials (never reuse the transport bearer):
+
+```env
+DEV_PORTAL_USERNAME=developer
+DEV_PORTAL_PASSWORD=set-a-long-unique-password
+```
+
+Browsers will prompt for these credentials when visiting `/dev`; the same
+credentials authorize the embedded audio clips. Only expose this path on a
+trusted developer network because it can reveal sensitive `debug_content` audit
+data. Older audit events without `offset_bytes` remain visible but cannot be
+played as individual clips.
 
 To roll back, set `IMAGE_TAG` to the prior tested tag and run:
 

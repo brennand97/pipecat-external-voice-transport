@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import html
 import io
 import json
@@ -15,36 +17,26 @@ from typing import Any
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
-_DEV_COOKIE = "voice_transport_dev"
 
-
-def require_bearer(request: Request, expected_token: str) -> None:
-    """Require the transport bearer without accepting URL/query-string secrets."""
-    scheme, _, header_token = request.headers.get("authorization", "").partition(" ")
-    token = (
-        header_token
-        if scheme.lower() == "bearer"
-        else request.cookies.get(_DEV_COOKIE, "")
-    )
-    if not token or not secrets.compare_digest(token, expected_token):
+def require_basic(request: Request, username: str, password: str) -> None:
+    """Require separate HTTP Basic credentials for the developer portal."""
+    scheme, _, encoded = request.headers.get("authorization", "").partition(" ")
+    try:
+        decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
+        supplied_username, supplied_password = decoded.split(":", 1)
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        supplied_username = supplied_password = ""
+    if not (
+        scheme.lower() == "basic"
+        and secrets.compare_digest(supplied_username, username)
+        and secrets.compare_digest(supplied_password, password)
+    ):
         raise HTTPException(
             status_code=401,
-            detail="Bearer authentication is required.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-def set_dev_cookie(response: Response, request: Request, expected_token: str) -> None:
-    """Persist a header-authenticated developer session for HTML audio requests."""
-    scheme, _, token = request.headers.get("authorization", "").partition(" ")
-    if scheme.lower() == "bearer" and secrets.compare_digest(token, expected_token):
-        response.set_cookie(
-            _DEV_COOKIE,
-            token,
-            httponly=True,
-            samesite="strict",
-            secure=request.url.scheme == "https",
-            path="/dev",
+            detail="Developer portal authentication is required.",
+            headers={
+                "WWW-Authenticate": 'Basic realm="Voice Transport developer portal"'
+            },
         )
 
 
@@ -93,8 +85,7 @@ def index_page(
     def session_row(session_id: str, events: list[dict[str, Any]]) -> str:
         escaped_id = html.escape(session_id, quote=True)
         session_link = (
-            f"<a href='/dev/sessions/{escaped_id}'>"
-            f"{html.escape(session_id)}</a>"
+            f"<a href='/dev/sessions/{escaped_id}'>{html.escape(session_id)}</a>"
         )
         return (
             "<tr>"

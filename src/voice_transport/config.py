@@ -36,6 +36,8 @@ class Settings:
     session_audit_log_path: str = ""
     session_audit_retention_days: int = 7
     session_audit_max_audio_bytes: int = 10_000_000
+    dev_portal_username: str = ""
+    dev_portal_password: str = ""
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -63,6 +65,8 @@ class Settings:
         trusted_tool_config_path = os.environ.get("TRUSTED_TOOL_CONFIG_PATH", "")
         session_audit_mode = os.environ.get("SESSION_AUDIT_MODE", "off")
         session_audit_log_path = os.environ.get("SESSION_AUDIT_LOG_PATH", "")
+        dev_portal_username = os.environ.get("DEV_PORTAL_USERNAME", "")
+        dev_portal_password = os.environ.get("DEV_PORTAL_PASSWORD", "")
         if realtime_provider == "openai_realtime" and (
             not public_base_url or not audio_url_signing_key
         ):
@@ -97,6 +101,10 @@ class Settings:
             )
         except ValueError as err:
             raise ConfigurationError("transport limits must be numeric") from err
+        if bool(dev_portal_username) != bool(dev_portal_password):
+            raise ConfigurationError(
+                "DEV_PORTAL_USERNAME and DEV_PORTAL_PASSWORD must be set together"
+            )
         if session_audit_mode not in {"off", "metadata", "debug_content"}:
             raise ConfigurationError("SESSION_AUDIT_MODE is not supported")
         if session_audit_mode != "off" and not session_audit_log_path:
@@ -141,4 +149,6 @@ class Settings:
             session_audit_log_path,
             session_audit_retention_days,
             session_audit_max_audio_bytes,
+            dev_portal_username,
+            dev_portal_password,
         )

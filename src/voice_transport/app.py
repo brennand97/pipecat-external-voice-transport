@@ -25,9 +25,8 @@ from .dev_portal import (
     detail_page,
     index_page,
     load_events,
-    require_bearer,
+    require_basic,
     sessions_by_recency,
-    set_dev_cookie,
     wav_clip,
 )
 from .protocol import (
@@ -126,16 +125,21 @@ def create_app(settings: Settings) -> FastAPI:
         except OSError:
             return "Trusted tool configuration is unavailable."
 
+    def _require_dev_portal(request: Request) -> None:
+        if not settings.dev_portal_username:
+            raise HTTPException(status_code=404, detail="Developer portal is disabled.")
+        require_basic(
+            request, settings.dev_portal_username, settings.dev_portal_password
+        )
+
     @app.get("/dev")
     async def developer_portal(request: Request) -> HTMLResponse:
-        require_bearer(request, settings.transport_token)
-        response = index_page(_dev_config(), sessions_by_recency(await _dev_events()))
-        set_dev_cookie(response, request, settings.transport_token)
-        return response
+        _require_dev_portal(request)
+        return index_page(_dev_config(), sessions_by_recency(await _dev_events()))
 
     @app.get("/dev/sessions/{session_id}")
     async def developer_session(request: Request, session_id: str) -> HTMLResponse:
-        require_bearer(request, settings.transport_token)
+        _require_dev_portal(request)
         events = [
             event for event in await _dev_events() if event["session_id"] == session_id
         ]
@@ -147,7 +151,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def developer_audio(
         request: Request, session_id: str, event_index: int
     ) -> Response:
-        require_bearer(request, settings.transport_token)
+        _require_dev_portal(request)
         events = [
             event for event in await _dev_events() if event["session_id"] == session_id
         ]
