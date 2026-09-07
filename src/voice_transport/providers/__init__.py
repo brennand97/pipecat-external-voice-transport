@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from voice_transport.agent.session import AgentSession
 from voice_transport.config import Settings
 from voice_transport.session_audit import SessionAuditLog
@@ -39,6 +41,7 @@ def create_agent_session(
     input_modalities: frozenset[str] = frozenset({"audio", "text"}),
     output_modalities: frozenset[str] = frozenset({"audio", "text"}),
     home_assistant_device_id: str | None = None,
+    session_end_event: asyncio.Event | None = None,
 ) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
     config = RealtimeProviderConfig(
@@ -54,6 +57,7 @@ def create_agent_session(
                 if home_assistant_device_id is not None
                 else None
             ),
+            session_end_event=session_end_event,
         ),
         output_voice=initial_voice,
         input_modalities=input_modalities,

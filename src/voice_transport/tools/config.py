@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,7 @@ from ..session_plan import SessionPlanError, ToolNamePattern
 from .mcp import MCPServerConfig, MCPToolProvider
 from .registry import ToolRegistry
 from .script import ScriptToolConfig, ScriptToolProvider
+from .session_control import END_SESSION_TOOL, SessionControlToolProvider
 
 
 class ToolConfigurationError(ValueError):
@@ -26,6 +28,7 @@ def create_tool_registry(
     profile_name: str | None = None,
     requested_tools: tuple[str, ...] | None = None,
     context_values: dict[str, str] | None = None,
+    session_end_event: asyncio.Event | None = None,
 ) -> ToolRegistry | None:
     """Create a fresh session-scoped registry from a trusted JSON file.
 
@@ -70,6 +73,10 @@ def create_tool_registry(
         for item in script_tools
         if _string(_object(item, "script tool"), "name") in selected[0]
     ]
+    server_tool_names = frozenset()
+    if session_end_event is not None:
+        providers.append(SessionControlToolProvider(session_end_event))
+        server_tool_names = frozenset({END_SESSION_TOOL})
     context_values = context_values or {}
     injections: dict[str, dict[str, str]] = {}
     disabled: set[str] = set()
@@ -94,6 +101,7 @@ def create_tool_registry(
         else None,
         context_injections=injections,
         disabled_tool_names=frozenset(disabled),
+        server_tool_names=server_tool_names,
     )
 
 

@@ -198,6 +198,8 @@ def create_app(settings: Settings) -> FastAPI:
         streams: dict[str, AudioStream] = {}
         issued_stream_ids: set[str] = set()
         expiry_tasks: set[asyncio.Task] = set()
+        session_end_event: asyncio.Event | None = None
+        session_end_task: asyncio.Task | None = None
         implicit_turn_number = 0
 
         async def emit_events() -> None:
@@ -322,6 +324,8 @@ def create_app(settings: Settings) -> FastAPI:
                 satellite_entity_id=start.satellite_entity_id,
                 satellite_name=start.satellite_name,
             )
+            if start.device_id is not None:
+                session_end_event = asyncio.Event()
             agent = create_agent_session(
                 settings,
                 audit=app.state.audit,
@@ -333,6 +337,7 @@ def create_app(settings: Settings) -> FastAPI:
                 input_modalities=start.input_modalities,
                 output_modalities=start.output_modalities,
                 home_assistant_device_id=start.device_id,
+                session_end_event=session_end_event,
             )
             actor = ConversationActor(agent)
             await actor.start()
@@ -346,6 +351,8 @@ def create_app(settings: Settings) -> FastAPI:
                 )
             )
             writer_task = asyncio.create_task(emit_events())
+            if session_end_event is not None:
+                session_end_task = asyncio.create_task(session_end_event.wait())
             started_at = time.monotonic()
 
             while True:
@@ -359,7 +366,11 @@ def create_app(settings: Settings) -> FastAPI:
                     )
                 receive_task = asyncio.create_task(websocket.receive())
                 done, _ = await asyncio.wait(
-                    {receive_task, writer_task},
+                    {
+                        task
+                        for task in (receive_task, writer_task, session_end_task)
+                        if task
+                    },
                     timeout=min(settings.input_idle_timeout_seconds, remaining),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
@@ -376,6 +387,19 @@ def create_app(settings: Settings) -> FastAPI:
                     raise ProtocolViolation(
                         "provider_closed", "The realtime provider closed unexpectedly."
                     )
+                if session_end_task in done:
+                    await _cancel_task(receive_task)
+                    await app.state.audit.record(
+                        session.start.session_id, "session.end_requested"
+                    )
+                    await actor.cancel()
+                    await websocket.send_json(
+                        {
+                            "type": "session.finished",
+                            "session_id": session.start.session_id,
+                        }
+                    )
+                    return
                 frame = receive_task.result()
                 if frame.get("type") == "websocket.disconnect":
                     return
@@ -466,6 +490,7 @@ def create_app(settings: Settings) -> FastAPI:
             if actor is not None:
                 await actor.close()
             await _cancel_task(writer_task)
+            await _cancel_task(session_end_task)
             for stream_id in issued_stream_ids:
                 await audio_store.revoke(stream_id)
             for task in tuple(expiry_tasks):

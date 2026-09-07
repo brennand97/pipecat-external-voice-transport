@@ -23,6 +23,7 @@ class ToolRegistry:
     requested_names: frozenset[str] | None = None
     context_injections: dict[str, dict[str, str]] = field(default_factory=dict)
     disabled_tool_names: frozenset[str] = frozenset()
+    server_tool_names: frozenset[str] = frozenset()
     _tools: dict[str, AsyncToolProvider] = field(default_factory=dict)
     _definitions: list[ToolDefinition] = field(default_factory=list)
     _provider_definitions: dict[str, ToolDefinition] = field(default_factory=dict)
@@ -61,12 +62,18 @@ class ToolRegistry:
             for tool in tools:
                 if tool.name in self.disabled_tool_names:
                     continue
-                if self.allowed_patterns and not any(
-                    pattern.matches(tool.name) for pattern in self.allowed_patterns
+                is_server_tool = tool.name in self.server_tool_names
+                if (
+                    not is_server_tool
+                    and self.allowed_patterns
+                    and not any(
+                        pattern.matches(tool.name) for pattern in self.allowed_patterns
+                    )
                 ):
                     continue
                 if (
-                    self.requested_names is not None
+                    not is_server_tool
+                    and self.requested_names is not None
                     and tool.name not in self.requested_names
                 ):
                     continue
