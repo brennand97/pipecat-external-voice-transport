@@ -33,6 +33,19 @@ async def test_mcp_provider_suppresses_streamable_http_cancel_scope_cleanup_erro
     assert provider._session is None
 
 
+async def test_mcp_provider_suppresses_grouped_cancel_scope_cleanup_error() -> None:
+    provider = MCPToolProvider(
+        MCPServerConfig(name="music", transport="streamable_http", url="https://music.example/mcp")
+    )
+
+    class Stack:
+        async def aclose(self):
+            raise ExceptionGroup("MCP shutdown", [RuntimeError("cancel scope is not current")])
+
+    provider._stack = Stack()
+    await provider.close()
+
+
 async def test_mcp_provider_reads_current_sdk_snake_case_input_schema() -> None:
     provider = MCPToolProvider(
         MCPServerConfig(
