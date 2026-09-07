@@ -157,7 +157,7 @@ def create_app(settings: Settings) -> FastAPI:
         ]
         if event_index < 0 or event_index >= len(events):
             raise HTTPException(status_code=404, detail="Audio event not found.")
-        return wav_clip(Path(settings.session_audit_log_path), events[event_index])
+        return wav_clip(Path(settings.session_audit_log_path), events, event_index)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

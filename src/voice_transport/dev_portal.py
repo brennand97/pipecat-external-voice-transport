@@ -124,14 +124,19 @@ def detail_page(session_id: str, events: list[dict[str, Any]]) -> HTMLResponse:
         }
         audio = ""
         if event.get("event") == "debug.audio_captured":
-            if isinstance(event.get("offset_bytes"), int):
+            prior = events[index - 1] if index else None
+            is_new_run = not isinstance(prior, dict) or (
+                prior.get("event") != "debug.audio_captured"
+                or prior.get("audio_file") != event.get("audio_file")
+            )
+            if is_new_run and isinstance(event.get("offset_bytes"), int):
                 escaped_id = html.escape(session_id, quote=True)
                 audio = (
                     "<audio controls preload='none' "
                     f"src='/dev/sessions/{escaped_id}/audio/{index}'></audio>"
                 )
-            else:
-                audio = "<em>Legacy audio event: per-event offset unavailable.</em>"
+            elif is_new_run:
+                audio = "<em>Legacy audio event: offset unavailable.</em>"
         rows.append(
             "<tr>"
             f"<td>{html.escape(str(event.get('timestamp', '')))}</td>"
@@ -149,8 +154,11 @@ def detail_page(session_id: str, events: list[dict[str, Any]]) -> HTMLResponse:
     return HTMLResponse(_document(body))
 
 
-def wav_clip(directory: Path, event: dict[str, Any]) -> Response:
-    """Return one bounded debug PCM audit event as a browser-playable WAV."""
+def wav_clip(
+    directory: Path, events: list[dict[str, Any]], event_index: int
+) -> Response:
+    """Return one contiguous debug-audio run as a browser-playable WAV."""
+    event = events[event_index]
     filename = event.get("audio_file")
     offset = event.get("offset_bytes")
     byte_count = event.get("bytes")
@@ -169,15 +177,26 @@ def wav_clip(directory: Path, event: dict[str, Any]) -> Response:
         and channels > 0
     ):
         raise HTTPException(status_code=404, detail="Audio clip is unavailable.")
+    end_offset = offset + byte_count
+    for candidate in events[event_index + 1 :]:
+        if (
+            candidate.get("event") != "debug.audio_captured"
+            or candidate.get("audio_file") != filename
+        ):
+            break
+        candidate_offset = candidate.get("offset_bytes")
+        candidate_bytes = candidate.get("bytes")
+        if isinstance(candidate_offset, int) and isinstance(candidate_bytes, int):
+            end_offset = max(end_offset, candidate_offset + candidate_bytes)
     try:
         with (directory / filename).open("rb") as file:
             file.seek(offset)
-            pcm = file.read(byte_count)
+            pcm = file.read(end_offset - offset)
     except OSError as err:
         raise HTTPException(
             status_code=404, detail="Audio sidecar is unavailable."
         ) from err
-    if len(pcm) != byte_count:
+    if len(pcm) < byte_count:
         raise HTTPException(status_code=404, detail="Audio clip is incomplete.")
     output = io.BytesIO()
     with wave.open(output, "wb") as wav:

@@ -292,8 +292,8 @@ and pruned with the normal audit retention policy.
 `GET /dev` is a deliberately minimal, server-rendered development portal. It
 shows the trusted tool configuration and audit sessions newest first; selecting
 a session shows its ordered events. New `debug.audio_captured` events include a
-byte offset, allowing each PCM event to be served as an individual WAV clip in
-the timeline.
+byte offset, allowing each contiguous PCM capture run to be served as one WAV
+clip in the timeline rather than as inaudibly short capture chunks.
 
 The portal is disabled by default. Enable it with separate Basic-auth
 credentials (never reuse the transport bearer):
