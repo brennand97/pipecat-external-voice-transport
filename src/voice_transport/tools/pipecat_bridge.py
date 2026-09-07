@@ -11,6 +11,28 @@ from voice_transport.tool_events import public_arguments, public_result
 
 from .registry import ToolRegistry
 
+_SUCCESS_PREAMBLE = (
+    "harness_tool_context:\n"
+    "status: completed_success\n"
+    "requested_action_performed: true\n"
+    "result_follows: true"
+)
+_FAILURE_PREAMBLE = (
+    "harness_tool_context:\n"
+    "status: completed_error\n"
+    "requested_action_performed: false\n"
+    "error_reason_follows: true"
+)
+
+
+def _model_result_payload(result: Any) -> dict[str, Any]:
+    """Make every completed tool result unambiguous to the model."""
+    preamble = _FAILURE_PREAMBLE if result.is_error else _SUCCESS_PREAMBLE
+    return {
+        "content": [{"type": "text", "text": preamble}, *result.content],
+        "is_error": result.is_error,
+    }
+
 
 class PipecatToolBridge:
     """Expose registry tools as Pipecat async function schemas and handlers."""
@@ -51,7 +73,7 @@ class PipecatToolBridge:
                     )
                 try:
                     result = await self._registry.call(tool_name, arguments)
-                    payload = {"content": result.content, "is_error": result.is_error}
+                    payload = _model_result_payload(result)
                     await params.result_callback(payload)
                     public_content, result_truncated = public_result(result.content)
                     if self._emit_event is not None:
@@ -69,7 +91,17 @@ class PipecatToolBridge:
                         )
                 except Exception:  # noqa: BLE001 - normalize tool boundary failures
                     payload = {
-                        "content": [{"type": "text", "text": "Tool execution failed."}],
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "harness_tool_context:\n"
+                                    "status: completed_error\n"
+                                    "requested_action_performed: false\n"
+                                    "error_reason_follows: false"
+                                ),
+                            }
+                        ],
                         "is_error": True,
                     }
                     await params.result_callback(payload)

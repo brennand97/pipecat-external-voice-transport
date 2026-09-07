@@ -50,11 +50,49 @@ async def test_pipecat_bridge_emits_tool_lifecycle_with_arguments_and_result() -
     assert events[1].tool_result == [{"type": "text", "text": "hello"}]
 
 
+async def test_pipecat_bridge_prepends_clear_failed_tool_completion() -> None:
+    class ErrorProvider(EchoProvider):
+        async def call_tool(self, name: str, arguments: dict[str, Any]) -> ToolResult:
+            return ToolResult(
+                [{"type": "text", "text": "A provider-specific failure."}],
+                is_error=True,
+            )
+
+    bridge = PipecatToolBridge(ToolRegistry((ErrorProvider(),)))
+    schema = (await bridge.function_schemas())[0]
+    params = Params({"text": "hello"})
+    await schema.handler(params)
+
+    assert params.results == [
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "harness_tool_context:\nstatus: completed_error\n"
+                    "requested_action_performed: false\nerror_reason_follows: true",
+                },
+                {"type": "text", "text": "A provider-specific failure."},
+            ],
+            "is_error": True,
+        }
+    ]
+
+
 async def test_pipecat_bridge_resolves_async_tool_result_callback() -> None:
     bridge = PipecatToolBridge(ToolRegistry((EchoProvider(),)))
     schema = (await bridge.function_schemas())[0]
     params = Params({"text": "hello"})
     await schema.handler(params)
     assert params.results == [
-        {"content": [{"type": "text", "text": "hello"}], "is_error": False}
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "harness_tool_context:\nstatus: completed_success\n"
+                    "requested_action_performed: true\nresult_follows: true",
+                },
+                {"type": "text", "text": "hello"},
+            ],
+            "is_error": False,
+        }
     ]

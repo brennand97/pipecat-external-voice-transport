@@ -59,8 +59,13 @@ async def test_local_tool_rejects_invalid_schema_input_without_call() -> None:
             "content": [
                 {
                     "type": "text",
+                    "text": "harness_tool_context:\nstatus: completed_error\n"
+                    "requested_action_performed: false\nerror_reason_follows: true",
+                },
+                {
+                    "type": "text",
                     "text": "Invalid arguments: property 'brightness' must be <= 100.",
-                }
+                },
             ],
             "is_error": True,
         }
@@ -77,6 +82,16 @@ async def test_local_model_tool_interface_forwards_valid_schema_input() -> None:
     await schema.handler(valid_call)
 
     assert valid_call.results == [
-        {"content": [{"type": "text", "text": "Light updated."}], "is_error": False}
+        {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "harness_tool_context:\nstatus: completed_success\n"
+                    "requested_action_performed: true\nresult_follows: true",
+                },
+                {"type": "text", "text": "Light updated."},
+            ],
+            "is_error": False,
+        }
     ]
     assert provider.calls == [{"name": "Kitchen", "brightness": 50}]
