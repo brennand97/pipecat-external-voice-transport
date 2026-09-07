@@ -34,6 +34,23 @@ async def test_debug_content_log_retains_transcript_and_redacts_credentials(
     ]
 
 
+async def test_audit_serializes_pydantic_style_provider_objects(tmp_path) -> None:
+    class FunctionSchema:
+        def model_dump(self, *, mode: str) -> dict[str, object]:
+            assert mode == "json"
+            return {"name": "example", "parameters": {"type": "object"}}
+
+    audit = SessionAuditLog(tmp_path, mode="debug_content", retention_days=7)
+    await audit.record_debug(
+        "session-1", "debug.model_context", context={"tools": [FunctionSchema()]}
+    )
+
+    entry = json.loads(next(tmp_path.glob("sessions-*.jsonl")).read_text())
+    assert entry["context"]["tools"] == [
+        {"name": "example", "parameters": {"type": "object"}}
+    ]
+
+
 async def test_debug_records_are_restricted_to_debug_content_mode(tmp_path) -> None:
     audit = SessionAuditLog(tmp_path, mode="metadata", retention_days=7)
     await audit.record_debug("session-1", "debug.model_context", context={"raw": 1})

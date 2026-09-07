@@ -69,7 +69,7 @@ class SessionAuditLog:
                 "result",
             }:
                 continue
-            entry[key] = _redact(value, key)
+            entry[key] = _redact(_json_safe(value), key)
         encoded = json.dumps(entry, separators=(",", ":"), sort_keys=True)
         path = self._directory / f"sessions-{now.date().isoformat()}.jsonl"
         try:
@@ -190,6 +190,23 @@ def _append_bytes(path: Path, payload: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("ab") as file:
         file.write(payload)
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert provider/Pydantic structures to JSON values before audit writes."""
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        try:
+            return _json_safe(model_dump(mode="json"))
+        except TypeError:
+            return _json_safe(model_dump())
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(item) for item in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
 
 
 def _redact(value: Any, key: str = "") -> Any:
