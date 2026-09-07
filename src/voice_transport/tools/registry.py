@@ -40,6 +40,23 @@ class ToolRegistry:
         # context and later session cleanup closes it. Avoid ``gather()``,
         # which would enter each context in a child task.
         discovered = [await provider.list_tools() for provider in self.providers]
+        await self._record_debug(
+            "debug.tools_available_unfiltered",
+            providers=[
+                {
+                    "provider": type(provider).__name__,
+                    "tools": [
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "input_schema": tool.input_schema,
+                        }
+                        for tool in tools
+                    ],
+                }
+                for provider, tools in zip(self.providers, discovered, strict=True)
+            ],
+        )
         for provider, tools in zip(self.providers, discovered, strict=True):
             for tool in tools:
                 if tool.name in self.disabled_tool_names:
@@ -63,6 +80,10 @@ class ToolRegistry:
             "tools.discovered", tools=[tool.name for tool in self._definitions]
         )
         return list(self._definitions)
+
+    async def record_debug(self, event: str, **fields: Any) -> None:
+        """Record sensitive provider diagnostics when debug auditing is enabled."""
+        await self._record_debug(event, **fields)
 
     async def call(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if not self._ready:
@@ -141,6 +162,10 @@ class ToolRegistry:
     async def _record(self, event: str, **fields: Any) -> None:
         if self.audit is not None and self.session_id:
             await self.audit.record(self.session_id, event, **fields)
+
+    async def _record_debug(self, event: str, **fields: Any) -> None:
+        if self.audit is not None and self.session_id:
+            await self.audit.record_debug(self.session_id, event, **fields)
 
 
 def _validate_arguments(

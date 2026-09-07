@@ -294,6 +294,28 @@ class OpenAIRealtimeAgentSession:
                 self._config.tool_registry, emit_event=self._events.put
             )
             tool_schemas = await self._tool_bridge.function_schemas()
+            await self._config.tool_registry.record_debug(
+                "debug.model_context",
+                context={
+                    "messages": [],
+                    "system_instruction": self._config.system_instruction,
+                    "session_update": {
+                        "model": self._model,
+                        "output_modalities": sorted(self._config.output_modalities),
+                        "tools": tool_schemas,
+                        "input_transcription_language": (
+                            self._config.input_transcription_language
+                            if "audio" in self._config.input_modalities
+                            else None
+                        ),
+                        "output_voice": (
+                            self._voice
+                            if "audio" in self._config.output_modalities
+                            else None
+                        ),
+                    },
+                },
+            )
         context = LLMContext([], tools=tool_schemas)
         user_aggregator, assistant_aggregator = LLMContextAggregatorPair(context)
 

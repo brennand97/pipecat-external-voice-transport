@@ -78,6 +78,11 @@ class SessionAuditLog:
         except OSError as err:
             self._disable_after_io_failure(err)
 
+    async def record_debug(self, session_id: str, event: str, **fields: Any) -> None:
+        """Record sensitive development diagnostics only in debug-content mode."""
+        if self._mode == "debug_content":
+            await self.record(session_id, event, **fields)
+
     async def record_audio(
         self,
         session_id: str,

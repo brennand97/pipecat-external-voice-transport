@@ -34,6 +34,17 @@ async def test_debug_content_log_retains_transcript_and_redacts_credentials(
     ]
 
 
+async def test_debug_records_are_restricted_to_debug_content_mode(tmp_path) -> None:
+    audit = SessionAuditLog(tmp_path, mode="metadata", retention_days=7)
+    await audit.record_debug("session-1", "debug.model_context", context={"raw": 1})
+    assert not list(tmp_path.glob("sessions-*.jsonl"))
+
+    debug = SessionAuditLog(tmp_path, mode="debug_content", retention_days=7)
+    await debug.record_debug("session-1", "debug.model_context", context={"raw": 1})
+    entry = json.loads(next(tmp_path.glob("sessions-*.jsonl")).read_text())
+    assert entry["context"] == {"raw": 1}
+
+
 async def test_debug_content_stores_bounded_audio_with_jsonl_sidecar_pointer(
     tmp_path,
 ) -> None:
