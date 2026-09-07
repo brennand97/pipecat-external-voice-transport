@@ -241,7 +241,19 @@ class ConversationActor:
             if event.type == "assistant.response_started":
                 if not self._accept_response_events:
                     return
-                turn_id = self._last_ended_turn or self.open_turn_id
+                # A newer audio turn can be opened while Realtime is still
+                # deciding whether to respond to the prior turn. Never let
+                # that stale response reach the client: it would cause the
+                # new user's transcript to appear after an unrelated answer.
+                open_turn = self.open_turn_id
+                if (
+                    open_turn is not None
+                    and self._last_ended_turn is not None
+                    and open_turn != self._last_ended_turn
+                ):
+                    await self._provider.interrupt()
+                    return
+                turn_id = self._last_ended_turn or open_turn
                 if turn_id is None:
                     return
                 self._response_number += 1

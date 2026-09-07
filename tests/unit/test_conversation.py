@@ -145,6 +145,23 @@ async def test_tool_events_retain_completed_response_correlation() -> None:
     await actor.close()
 
 
+async def test_new_audio_turn_fences_a_late_response_for_prior_turn() -> None:
+    provider = Provider()
+    actor = ConversationActor(provider)
+    await actor.start()
+    await actor.start_turn("one", TurnInput.AUDIO)
+    await actor.end_turn("one")
+    await actor.start_turn("two", TurnInput.AUDIO)
+
+    await provider.events_queue.put(AgentEvent("assistant.response_started"))
+    await asyncio.sleep(0)
+
+    assert provider.calls[-1] == ("interrupt",)
+    assert actor.active_response_id is None
+    assert actor._events.empty()
+    await actor.close()
+
+
 async def test_audio_does_not_interrupt_until_provider_detects_speech() -> None:
     provider = Provider()
     actor = ConversationActor(provider)
