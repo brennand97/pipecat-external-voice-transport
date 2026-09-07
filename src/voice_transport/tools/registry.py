@@ -107,6 +107,11 @@ class ToolRegistry:
             validation_error = "a context-owned argument was supplied by the model."
         else:
             provider_arguments = {**arguments, **injected}
+            # Home Assistant currently publishes StartTimer.name as optional,
+            # but its MCP handler indexes it as required. Supply a neutral
+            # server-owned label when the model correctly omits it per schema.
+            if name == "StartTimer":
+                provider_arguments.setdefault("name", "Timer")
             validation_error = _validate_arguments(
                 definition.input_schema, provider_arguments
             )
