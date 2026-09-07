@@ -34,6 +34,43 @@ async def test_debug_content_log_retains_transcript_and_redacts_credentials(
     ]
 
 
+async def test_audit_serializes_pipecat_function_schema(tmp_path) -> None:
+    from pipecat.adapters.schemas.function_schema import FunctionSchema
+
+    async def handler(_params) -> None:
+        pass
+
+    audit = SessionAuditLog(tmp_path, mode="debug_content", retention_days=7)
+    await audit.record_debug(
+        "session-1",
+        "debug.model_context",
+        context={
+            "tools": [
+                FunctionSchema(
+                    name="example",
+                    description="Example tool.",
+                    properties={"seconds": {"type": "integer"}},
+                    required=["seconds"],
+                    handler=handler,
+                )
+            ]
+        },
+    )
+
+    entry = json.loads(next(tmp_path.glob("sessions-*.jsonl")).read_text())
+    assert entry["context"]["tools"] == [
+        {
+            "name": "example",
+            "description": "Example tool.",
+            "parameters": {
+                "type": "object",
+                "properties": {"seconds": {"type": "integer"}},
+                "required": ["seconds"],
+            },
+        }
+    ]
+
+
 async def test_audit_serializes_pydantic_style_provider_objects(tmp_path) -> None:
     class FunctionSchema:
         def model_dump(self, *, mode: str) -> dict[str, object]:

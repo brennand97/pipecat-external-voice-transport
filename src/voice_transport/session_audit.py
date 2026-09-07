@@ -194,6 +194,9 @@ def _append_bytes(path: Path, payload: bytes) -> None:
 
 def _json_safe(value: Any) -> Any:
     """Convert provider/Pydantic structures to JSON values before audit writes."""
+    to_default_dict = getattr(value, "to_default_dict", None)
+    if callable(to_default_dict):
+        return _json_safe(to_default_dict())
     model_dump = getattr(value, "model_dump", None)
     if callable(model_dump):
         try:
