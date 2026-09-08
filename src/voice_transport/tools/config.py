@@ -10,6 +10,7 @@ from typing import Any
 
 from ..session_audit import SessionAuditLog
 from ..session_plan import SessionPlanError, ToolNamePattern
+from .calculator import CalculatorToolProvider
 from .mcp import MCPServerConfig, MCPToolProvider
 from .registry import ToolRegistry
 from .script import ScriptToolConfig, ScriptToolProvider
@@ -73,10 +74,12 @@ def create_tool_registry(
         for item in script_tools
         if _string(_object(item, "script tool"), "name") in selected[0]
     ]
-    server_tool_names = frozenset()
+    # Local arithmetic has no device capability and is useful to every agent.
+    providers.append(CalculatorToolProvider())
+    server_tool_names = frozenset({"transport__Calculate"})
     if session_end_event is not None:
         providers.append(SessionControlToolProvider(session_end_event))
-        server_tool_names = frozenset({END_SESSION_TOOL})
+        server_tool_names |= frozenset({END_SESSION_TOOL})
     context_values = context_values or {}
     injections: dict[str, dict[str, str]] = {}
     disabled: set[str] = set()

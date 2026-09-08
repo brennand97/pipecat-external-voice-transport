@@ -77,7 +77,8 @@ def test_named_profile_selects_declared_provider_and_exact_client_subset(
         requested_tools=("intent__HassTurnOn",),
     )
 
-    assert len(registry.providers) == 1
+    # The requested MCP provider plus the always-available local calculator.
+    assert len(registry.providers) == 2
     assert registry.requested_names == frozenset({"intent__HassTurnOn"})
     assert registry.allowed_patterns[0].value == "intent__Hass*"
 
