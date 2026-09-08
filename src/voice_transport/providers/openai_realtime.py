@@ -160,6 +160,64 @@ def _ready_openai_service(
             # A missing retry hint still gets a short, bounded recovery window.
             return min(max(float(match.group(1)) if match else 1.0, 0.25), 30.0)
 
+        async def _receive_task_handler(self) -> None:
+            """Keep the Realtime socket alive across retryable rate limits.
+
+            Pipecat upstream exits this loop after every ``error`` event. OpenAI
+            explicitly permits retrying a rate-limited response on the same
+            session, so only that error is non-terminal here; all other errors
+            preserve upstream's fail-closed behavior.
+            """
+            assert self._websocket is not None
+            async for message in self._websocket:
+                event = realtime_events.parse_server_event(message)
+                if event.type == "session.created":
+                    await self._handle_evt_session_created(event)
+                elif event.type == "session.updated":
+                    await self._handle_evt_session_updated(event)
+                elif event.type == "response.output_audio.delta":
+                    await self._handle_evt_audio_delta(event)
+                elif event.type == "conversation.item.added":
+                    await self._handle_evt_conversation_item_added(event)
+                elif event.type == "conversation.item.done":
+                    await self._handle_evt_conversation_item_done(event)
+                elif event.type == "conversation.item.input_audio_transcription.delta":
+                    await self._handle_evt_input_audio_transcription_delta(event)
+                elif (
+                    event.type
+                    == "conversation.item.input_audio_transcription." "completed"
+                ):
+                    await self.handle_evt_input_audio_transcription_completed(event)
+                elif event.type == "conversation.item.retrieved":
+                    await self._handle_conversation_item_retrieved(event)
+                elif event.type == "response.done":
+                    await self._handle_evt_response_done(event)
+                elif event.type == "input_audio_buffer.speech_started":
+                    await self._handle_evt_speech_started(event)
+                elif event.type == "input_audio_buffer.speech_stopped":
+                    await self._handle_evt_speech_stopped(event)
+                elif event.type == "response.output_text.delta":
+                    await self._handle_evt_text_delta(event)
+                elif event.type == "response.output_audio_transcript.delta":
+                    await self._handle_evt_audio_transcript_delta(event)
+                elif event.type == "response.function_call_arguments.done":
+                    await self._handle_evt_function_call_arguments_done(event)
+                elif event.type == "error":
+                    if await self._maybe_handle_evt_retrieve_conversation_item_error(
+                        event
+                    ):
+                        continue
+                    if event.error.code in {
+                        "response_cancel_not_active",
+                        "conversation_already_has_active_response",
+                    }:
+                        continue
+                    if self._retry_after(event.error.message) is not None:
+                        await self._handle_evt_error(event)
+                        continue
+                    await self._handle_evt_error(event)
+                    return
+
         async def _handle_evt_error(self, event) -> None:
             error = str(event)
             retry_after = self._retry_after(error)
