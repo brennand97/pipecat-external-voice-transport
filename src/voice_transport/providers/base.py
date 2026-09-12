@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from voice_transport.agent.session import AgentSession
+from voice_transport.audio_enhancement import AudioInputEnhancementConfig
 from voice_transport.tools.registry import ToolRegistry
 
 
@@ -21,6 +22,8 @@ class RealtimeProviderConfig:
     input_modalities: frozenset[str] = frozenset({"audio", "text"})
     output_modalities: frozenset[str] = frozenset({"audio", "text"})
     input_transcription_language: str = "en"
+    audio_input: AudioInputEnhancementConfig = AudioInputEnhancementConfig()
+    gtcrn_model_path: str = ""
 
 
 class RealtimeProvider(Protocol):

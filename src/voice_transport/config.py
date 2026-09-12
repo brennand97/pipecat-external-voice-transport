@@ -39,6 +39,7 @@ class Settings:
     dev_portal_username: str = ""
     dev_portal_password: str = ""
     openai_input_transcription_language: str = "en"
+    gtcrn_model_path: str = ""
 
     @classmethod
     def from_environment(cls) -> Settings:
@@ -54,6 +55,7 @@ class Settings:
         transcription_language = os.environ.get(
             "OPENAI_INPUT_TRANSCRIPTION_LANGUAGE", "en"
         ).strip()
+        gtcrn_model_path = os.environ.get("GTCRN_MODEL_PATH", "")
         if realtime_provider not in {"fake", "openai_realtime"}:
             raise ConfigurationError("REALTIME_PROVIDER is not supported")
         if realtime_provider == "openai_realtime" and not openai_api_key:
@@ -161,4 +163,5 @@ class Settings:
             dev_portal_username,
             dev_portal_password,
             transcription_language,
+            gtcrn_model_path,
         )

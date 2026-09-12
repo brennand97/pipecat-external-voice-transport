@@ -3,4 +3,6 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+voice-audio-fixtures/
+audio-enhancement-results/
 *.egg-info/

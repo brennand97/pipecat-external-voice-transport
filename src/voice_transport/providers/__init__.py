@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from voice_transport.agent.session import AgentSession
+from voice_transport.audio_enhancement import AudioInputEnhancementConfig
 from voice_transport.config import Settings
 from voice_transport.session_audit import SessionAuditLog
 from voice_transport.tools.config import create_tool_registry
@@ -44,21 +45,28 @@ def create_agent_session(
     session_end_event: asyncio.Event | None = None,
 ) -> AgentSession:
     """Build the configured provider session without exposing it to transport code."""
+    tool_registry = create_tool_registry(
+        settings.trusted_tool_config_path,
+        audit=audit,
+        session_id=session_id,
+        profile_name=tool_profile,
+        requested_tools=requested_tools,
+        context_values=(
+            {"home_assistant_device_id": home_assistant_device_id}
+            if home_assistant_device_id is not None
+            else None
+        ),
+        session_end_event=session_end_event,
+    )
     config = RealtimeProviderConfig(
         system_instruction=initial_prompt or DEFAULT_SYSTEM_INSTRUCTION,
-        tool_registry=create_tool_registry(
-            settings.trusted_tool_config_path,
-            audit=audit,
-            session_id=session_id,
-            profile_name=tool_profile,
-            requested_tools=requested_tools,
-            context_values=(
-                {"home_assistant_device_id": home_assistant_device_id}
-                if home_assistant_device_id is not None
-                else None
-            ),
-            session_end_event=session_end_event,
+        tool_registry=tool_registry,
+        audio_input=(
+            tool_registry.audio_input
+            if tool_registry is not None
+            else AudioInputEnhancementConfig()
         ),
+        gtcrn_model_path=settings.gtcrn_model_path,
         output_voice=initial_voice,
         input_modalities=input_modalities,
         output_modalities=output_modalities,

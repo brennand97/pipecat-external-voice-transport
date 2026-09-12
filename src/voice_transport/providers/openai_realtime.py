@@ -38,6 +38,12 @@ from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.workers.runner import WorkerRunner
 
 from voice_transport.agent.session import AgentEvent, AgentSession
+from voice_transport.audio_enhancement import (
+    AudioEnhancementError,
+    AudioEnhancer,
+    EnhancementMetrics,
+    create_audio_enhancer,
+)
 from voice_transport.tools.pipecat_bridge import PipecatToolBridge
 
 from .base import RealtimeProviderConfig
@@ -89,7 +95,13 @@ def _session_properties(
                         language=config.input_transcription_language
                     ),
                     turn_detection=SemanticTurnDetection(),
-                    noise_reduction=InputAudioNoiseReduction(type="near_field"),
+                    noise_reduction=(
+                        InputAudioNoiseReduction(
+                            type=config.audio_input.provider_noise_reduction
+                        )
+                        if config.audio_input.provider_noise_reduction != "disabled"
+                        else None
+                    ),
                 )
                 if "audio" in config.input_modalities
                 else None
@@ -184,8 +196,8 @@ def _ready_openai_service(
                 elif event.type == "conversation.item.input_audio_transcription.delta":
                     await self._handle_evt_input_audio_transcription_delta(event)
                 elif (
-                    event.type
-                    == "conversation.item.input_audio_transcription." "completed"
+                    event.type == "conversation.item.input_audio_transcription."
+                    "completed"
                 ):
                     await self.handle_evt_input_audio_transcription_completed(event)
                 elif event.type == "conversation.item.retrieved":
@@ -328,6 +340,7 @@ class OpenAIRealtimeAgentSession:
         self._events_finished = False
         self._pending_text: dict[str, str] = {}
         self._tool_bridge: PipecatToolBridge | None = None
+        self._audio_enhancer: AudioEnhancer | None = None
 
     @property
     def effective_profile(self) -> str | None:
@@ -346,6 +359,11 @@ class OpenAIRealtimeAgentSession:
         self._source = _PipecatPCMSource(
             self._config.input_sample_rate, self._config.input_channels
         )
+        if self._config.audio_input.enhancer != "disabled":
+            self._audio_enhancer = create_audio_enhancer(
+                self._config.audio_input,
+                gtcrn_model_path=self._config.gtcrn_model_path,
+            )
         tool_schemas = []
         if self._config.tool_registry is not None:
             self._tool_bridge = PipecatToolBridge(
@@ -371,6 +389,12 @@ class OpenAIRealtimeAgentSession:
                             if "audio" in self._config.output_modalities
                             else None
                         ),
+                        "audio_input": {
+                            "enhancer": self._config.audio_input.enhancer,
+                            "provider_noise_reduction": (
+                                self._config.audio_input.provider_noise_reduction
+                            ),
+                        },
                     },
                 },
             )
@@ -397,16 +421,18 @@ class OpenAIRealtimeAgentSession:
         # the initial session.update without legacy duplicate registration.
         llm._sync_registered_tool_handlers(tool_schemas)
         self._llm = llm
+        processors = [self._source]
+        if self._audio_enhancer is not None:
+            processors.append(
+                _PipecatAudioEnhancementProcessor(
+                    self._audio_enhancer,
+                    self._record_enhancement_metrics,
+                    self._record_processed_audio,
+                )
+            )
+        processors.extend([user_aggregator, llm, sink, assistant_aggregator])
         worker = PipelineWorker(
-            Pipeline(
-                [
-                    self._source,
-                    user_aggregator,
-                    llm,
-                    sink,
-                    assistant_aggregator,
-                ]
-            ),
+            Pipeline(processors),
             idle_timeout_secs=300,
             params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
         )
@@ -448,6 +474,7 @@ class OpenAIRealtimeAgentSession:
     async def cancel(self) -> None:
         await self._cancel_rate_limit_retry()
         await self._stop_pipeline("external_transport_cancelled")
+        await self._close_audio_enhancer()
         if self._tool_bridge is not None:
             await self._tool_bridge.close()
         await self._finish_events()
@@ -457,9 +484,42 @@ class OpenAIRealtimeAgentSession:
             return
         await self._cancel_rate_limit_retry()
         await self._stop_pipeline("external_transport_closed")
+        await self._close_audio_enhancer()
         if self._tool_bridge is not None:
             await self._tool_bridge.close()
         await self._finish_events()
+
+    async def _record_processed_audio(
+        self, pcm: bytes, sample_rate: int, channels: int
+    ) -> None:
+        registry = self._config.tool_registry
+        if registry is not None:
+            await registry.record_processed_audio(
+                pcm, sample_rate=sample_rate, channels=channels
+            )
+
+    async def _record_enhancement_metrics(self, metrics: EnhancementMetrics) -> None:
+        registry = self._config.tool_registry
+        if registry is None:
+            return
+        await registry.record_debug(
+            "audio.enhancement_metrics",
+            enhancer=self._config.audio_input.enhancer,
+            provider_noise_reduction=self._config.audio_input.provider_noise_reduction,
+            frames=metrics.frames,
+            input_rms_dbfs=metrics.input_rms_dbfs,
+            output_rms_dbfs=metrics.output_rms_dbfs,
+            output_peak_dbfs=metrics.output_peak_dbfs,
+            limiter_samples=metrics.limiter_samples,
+            inference_ms=metrics.inference_ms,
+            deadline_missed=metrics.deadline_missed,
+            failed_open=metrics.failed_open,
+        )
+
+    async def _close_audio_enhancer(self) -> None:
+        if self._audio_enhancer is not None:
+            enhancer, self._audio_enhancer = self._audio_enhancer, None
+            await enhancer.close()
 
     async def _cancel_rate_limit_retry(self) -> None:
         if self._llm is not None:
@@ -483,6 +543,34 @@ class OpenAIRealtimeAgentSession:
         self._events_finished = True
         self._closed = True
         await self._events.put(None)
+
+
+class _PipecatAudioEnhancementProcessor:
+    """Apply session-local enhancement before any provider sees microphone PCM."""
+
+    def __new__(cls, enhancer: AudioEnhancer, record_metrics, record_processed_audio):
+        class Processor(FrameProcessor):
+            async def process_frame(self, frame, direction) -> None:
+                await super().process_frame(frame, direction)
+                if isinstance(frame, InputAudioRawFrame):
+                    try:
+                        audio, metrics = await enhancer.process(
+                            frame.audio, frame.sample_rate, frame.num_channels
+                        )
+                    except AudioEnhancementError:
+                        raise
+                    await record_metrics(metrics)
+                    await record_processed_audio(
+                        audio, frame.sample_rate, frame.num_channels
+                    )
+                    frame = InputAudioRawFrame(
+                        audio=audio,
+                        sample_rate=frame.sample_rate,
+                        num_channels=frame.num_channels,
+                    )
+                await self.push_frame(frame, direction)
+
+        return Processor(name="external-audio-enhancement")
 
 
 class _PipecatPCMSource:

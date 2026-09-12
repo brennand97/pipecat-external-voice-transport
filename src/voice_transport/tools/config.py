@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..audio_enhancement import AudioInputEnhancementConfig, parse_audio_input_config
 from ..session_audit import SessionAuditLog
 from ..session_plan import SessionPlanError, ToolNamePattern
 from .calculator import CalculatorToolProvider
@@ -105,13 +106,20 @@ def create_tool_registry(
         context_injections=injections,
         disabled_tool_names=frozenset(disabled),
         server_tool_names=server_tool_names,
+        audio_input=selected[3],
     )
 
 
 def _profiles(
     document: dict[str, Any], mcp_servers: list[object], script_tools: list[object]
 ) -> dict[
-    str, tuple[frozenset[str], tuple[ToolNamePattern, ...], dict[str, dict[str, str]]]
+    str,
+    tuple[
+        frozenset[str],
+        tuple[ToolNamePattern, ...],
+        dict[str, dict[str, str]],
+        AudioInputEnhancementConfig,
+    ],
 ]:
     """Parse profiles, or synthesize a restrictive legacy default profile."""
     raw = document.get("profiles")
@@ -128,7 +136,14 @@ def _profiles(
                 "allowed_tools",
             )
         ] + [_string(_object(item, "script tool"), "name") for item in script_tools]
-        return {"default": (names, _patterns(allowed, "allowed_tools"), {})}
+        return {
+            "default": (
+                names,
+                _patterns(allowed, "allowed_tools"),
+                {},
+                AudioInputEnhancementConfig(),
+            )
+        }
     if not isinstance(raw, dict) or not raw:
         raise ToolConfigurationError("profiles must be a non-empty object")
     available = {
@@ -137,13 +152,20 @@ def _profiles(
     }
     profiles: dict[
         str,
-        tuple[frozenset[str], tuple[ToolNamePattern, ...], dict[str, dict[str, str]]],
+        tuple[
+            frozenset[str],
+            tuple[ToolNamePattern, ...],
+            dict[str, dict[str, str]],
+            AudioInputEnhancementConfig,
+        ],
     ] = {}
     for name, value in raw.items():
         if not isinstance(name, str) or not name:
             raise ToolConfigurationError("profile names must be non-empty strings")
         item = _object(value, "profile")
-        _reject_unknown_keys(item, {"providers", "allowed_tools", "context_injections"})
+        _reject_unknown_keys(
+            item, {"providers", "allowed_tools", "context_injections", "audio_input"}
+        )
         providers = frozenset(_string_list(item.get("providers"), "providers"))
         # A profile may intentionally select no external provider: server-owned
         # tools such as the local calculator remain available in that session.
@@ -156,8 +178,16 @@ def _profiles(
                 "allowed_tools",
             ),
             _context_injections(item.get("context_injections", {})),
+            _parse_audio_input(item.get("audio_input")),
         )
     return profiles
+
+
+def _parse_audio_input(value: object) -> AudioInputEnhancementConfig:
+    try:
+        return parse_audio_input_config(value)
+    except ValueError as err:
+        raise ToolConfigurationError(str(err)) from err
 
 
 def _context_injections(value: object) -> dict[str, dict[str, str]]:

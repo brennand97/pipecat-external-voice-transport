@@ -6,6 +6,7 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..audio_enhancement import AudioInputEnhancementConfig
 from ..session_audit import SessionAuditLog
 from ..session_plan import ToolNamePattern
 from .base import AsyncToolProvider, ToolDefinition, ToolResult
@@ -24,6 +25,9 @@ class ToolRegistry:
     context_injections: dict[str, dict[str, str]] = field(default_factory=dict)
     disabled_tool_names: frozenset[str] = frozenset()
     server_tool_names: frozenset[str] = frozenset()
+    audio_input: AudioInputEnhancementConfig = field(
+        default_factory=AudioInputEnhancementConfig
+    )
     _tools: dict[str, AsyncToolProvider] = field(default_factory=dict)
     _definitions: list[ToolDefinition] = field(default_factory=list)
     _provider_definitions: dict[str, ToolDefinition] = field(default_factory=dict)
@@ -91,6 +95,19 @@ class ToolRegistry:
     async def record_debug(self, event: str, **fields: Any) -> None:
         """Record sensitive provider diagnostics when debug auditing is enabled."""
         await self._record_debug(event, **fields)
+
+    async def record_processed_audio(
+        self, pcm: bytes, *, sample_rate: int, channels: int
+    ) -> None:
+        """Write processed input only under the explicit debug-content policy."""
+        if self.audit is not None and self.session_id:
+            await self.audit.record_audio(
+                self.session_id,
+                "input_processed",
+                pcm,
+                sample_rate=sample_rate,
+                channels=channels,
+            )
 
     async def call(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         if not self._ready:

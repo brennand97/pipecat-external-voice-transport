@@ -122,6 +122,7 @@ All runtime settings are environment variables.
 | `PUBLIC_BASE_URL` | — | Required for OpenAI mode; public HTTPS origin used in audio URLs. |
 | `AUDIO_URL_SIGNING_KEY` | — | Required for OpenAI mode; separate secret for audio capabilities. |
 | `AUDIO_URL_TOKEN_TTL_SECONDS` | `60` | Lifetime of a signed audio capability. |
+| `GTCRN_MODEL_PATH` | empty | Required only when a trusted profile selects `audio_input.enhancer: gtcrn`; production image path is `/app/models/gtcrn_simple.onnx`. |
 
 ### Limits
 
@@ -141,10 +142,23 @@ Invalid or missing required configuration fails startup rather than silently fal
 
 ## Trusted tools
 
-Tools are disabled unless `TRUSTED_TOOL_CONFIG_PATH` names a read-only JSON file mounted by the administrator.
+Tools are disabled unless `TRUSTED_TOOL_CONFIG_PATH` names a read-only JSON file mounted by the administrator. Profiles may also contain server-owned `audio_input` policy; clients can select a profile but cannot select models or DSP parameters.
 
 ```json
 {
+  "profiles": {
+    "far-field": {
+      "providers": ["home-assistant"],
+      "allowed_tools": ["get_state"],
+      "audio_input": {
+        "enhancer": "gtcrn",
+        "output_gain_db": 3,
+        "limiter_dbfs": -3,
+        "provider_noise_reduction": "far_field",
+        "failure_mode": "open"
+      }
+    }
+  },
   "mcp_servers": [
     {
       "name": "home-assistant",

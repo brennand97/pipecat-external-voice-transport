@@ -10,11 +10,12 @@ WORKDIR /app
 RUN groupadd --system app && useradd --system --gid app --create-home app
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY models ./models
 # Pipecat sentence streaming uses punkt_tab. Install it while the image is
 # writable so the production read-only filesystem never attempts a fetch.
 RUN python -m venv .venv \
     && .venv/bin/pip install --no-cache-dir --upgrade pip \
-    && .venv/bin/pip install --no-cache-dir '.[realtime,tools]' \
+    && .venv/bin/pip install --no-cache-dir '.[realtime,tools,enhancement]' \
     && .venv/bin/python -c "import nltk; nltk.download('punkt_tab', download_dir='/app/nltk_data', quiet=True, raise_on_error=True)" \
     && chown -R app:app /app
 

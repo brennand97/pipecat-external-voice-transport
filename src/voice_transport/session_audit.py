@@ -86,7 +86,7 @@ class SessionAuditLog:
     async def record_audio(
         self,
         session_id: str,
-        direction: Literal["input", "output"],
+        direction: Literal["input", "input_processed", "output"],
         pcm: bytes,
         *,
         sample_rate: int,

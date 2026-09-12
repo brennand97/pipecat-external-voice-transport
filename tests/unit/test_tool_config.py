@@ -39,6 +39,30 @@ def test_tool_config_creates_only_explicit_trusted_providers(tmp_path) -> None:
     assert registry.providers[1].config.command == ("/usr/local/bin/calendar-tool",)
 
 
+def test_named_profile_parses_server_owned_audio_input(tmp_path) -> None:
+    path = tmp_path / "tools.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": {
+                    "far-field": {
+                        "providers": [],
+                        "allowed_tools": ["transport__Calculate"],
+                        "audio_input": {
+                            "enhancer": "gtcrn",
+                            "provider_noise_reduction": "far_field",
+                        },
+                    }
+                }
+            }
+        )
+    )
+    registry = create_tool_registry(str(path), profile_name="far-field")
+    assert registry is not None
+    assert registry.audio_input.enhancer == "gtcrn"
+    assert registry.audio_input.provider_noise_reduction == "far_field"
+
+
 def test_named_profile_selects_declared_provider_and_exact_client_subset(
     tmp_path,
 ) -> None:
