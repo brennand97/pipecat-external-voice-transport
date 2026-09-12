@@ -4,12 +4,56 @@ import asyncio
 import json
 import os
 import secrets
+import socket
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import pytest
+import uvicorn
 from websockets.asyncio.client import connect
 
-from tests.integration.test_live_openai_mcp import running_server, session_start
+from voice_transport.app import create_app
 from voice_transport.config import Settings
+
+
+@asynccontextmanager
+async def running_server(settings: Settings) -> AsyncIterator[str]:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    server = uvicorn.Server(
+        uvicorn.Config(
+            create_app(settings),
+            host="127.0.0.1",
+            port=port,
+            access_log=False,
+            lifespan="off",
+            log_level="warning",
+        )
+    )
+    task = asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise TimeoutError("live E2E server did not start")
+        yield f"ws://127.0.0.1:{port}/transport/v1"
+    finally:
+        server.should_exit = True
+        await asyncio.wait_for(task, 5)
+
+
+def session_start() -> dict[str, object]:
+    return {
+        "type": "session.start",
+        "protocol_version": 1,
+        "session_id": "live-calculator-e2e",
+        "satellite": {"entity_id": "assist_satellite.live_test", "name": "Live Test"},
+        "audio": {"encoding": "pcm_s16le", "sample_rate": 16000, "channels": 1},
+        "conversation": {"id": None, "wake_word": None},
+    }
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_LIVE_OPENAI_MCP_TEST") != "1",
