@@ -145,7 +145,9 @@ def _profiles(
         item = _object(value, "profile")
         _reject_unknown_keys(item, {"providers", "allowed_tools", "context_injections"})
         providers = frozenset(_string_list(item.get("providers"), "providers"))
-        if not providers or not providers <= available:
+        # A profile may intentionally select no external provider: server-owned
+        # tools such as the local calculator remain available in that session.
+        if not providers <= available:
             raise ToolConfigurationError("profile references an unknown provider")
         profiles[name] = (
             providers,
