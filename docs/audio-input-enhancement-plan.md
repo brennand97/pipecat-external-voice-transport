@@ -1,8 +1,10 @@
 # Profile-scoped ML audio enhancement — low-level implementation plan
 
-Status: design only; implementation has not started.
+Status: GTCRN was implemented experimentally in commit `165b9e7` but failed the live quality gates and remains disabled. DPDFNet was evaluated and rejected without being retained. The current recommendation is to fix capture and media interference at the Satellite edge before evaluating another server-side neural enhancer.
 
 Audience: an implementation agent with no prior conversation context.
+
+> **Historical-plan note:** Sections 3–13 record the original GTCRN implementation and validation plan. Section 14 contains the resulting measurements, public Home Assistant ecosystem research, and revised implementation priorities. It supersedes earlier statements that GTCRN is the primary production candidate.
 
 ## 1. Goal
 
@@ -629,3 +631,170 @@ Use fail-first tests and one concern per commit:
 12. Run HA-to-`kratos` live protocol, attach redacted measurements to the PR, and release only after gates pass.
 
 Do not implement Satellite media ducking in this repository or in the same PR.
+
+## 14. Post-implementation findings and revised direction
+
+### 14.1 Local and live model results
+
+GTCRN was implemented behind trusted profile configuration with a pinned sherpa-onnx runtime/model, session-local streaming state, output gain/limiting, provider noise-reduction selection, processed debug auditing, and an offline harness.
+
+Validation after implementation:
+
+- full suite: `115 passed, 2 skipped` after removal of the DPDFNet experiment;
+- normal-fixture realtime factor: approximately 0.13–0.14;
+- audited-capture realtime factor: approximately 0.13–0.17;
+- audited-capture p99 processing: approximately 16–33 ms, above the original 8 ms target;
+- input/output byte lengths matched;
+- the problem capture changed from about -26.3 to -29.7 dBFS, with correlation 0.755 after the model's 16 ms delay;
+- a short low-level capture was over-suppressed from about -39.2 to -68.8 dBFS.
+
+Matched live OpenAI replay showed that GTCRN did not improve the audited requests and increased speech-start events. It must remain disabled in production.
+
+DPDFNet baseline was then implemented temporarily through sherpa-onnx and tested with bounded attenuation. Its local benchmark on one capture processed 793 frames with approximately 15.22 ms p50, 25.23 ms p95, 32.98 ms p99, realtime factor 0.211, about 137 MiB process RSS, and exact byte-length preservation.
+
+Live OpenAI replay with provider noise reduction disabled isolated the DPDFNet effect:
+
+| Case/profile | Speech starts | Relevant transcript result |
+|---|---:|---|
+| Kitchen raw | 5 | `Can you play Supreme Carpenter in the kitchen?` |
+| Kitchen DPDFNet, 12 dB | 7 | `Can you replace a broken carburetor on an addiction?` |
+| Kitchen DPDFNet, 6 dB | 7 | `Can you replace a granite carbon dioxide` |
+| Timer raw | 3 | `Turn off the bread timer.` |
+| Timer DPDFNet, 12 dB | 3 | `Can I have the bread timer?` |
+
+Later, louder utterances were generally intelligible, but the weak initial request—the primary target—degraded badly at both attenuation limits. The DPDFNet code and approximately 8.4 MB model were removed rather than exposing a harmful profile option.
+
+Do not proceed directly to DTLN or another mono neural denoiser. Any future candidate must first justify why it addresses a failure mode not already disproved by GTCRN and DPDFNet.
+
+### 14.2 The problem is three separate problems
+
+Public Home Assistant Satellite implementations and issue reports consistently separate these failure modes:
+
+1. **Quiet/far-field capture:** speech reaches the transport at the wrong level or already lacks important consonants. A downstream enhancer cannot reconstruct information the Android capture path did not deliver.
+2. **Competing speech from television/music:** a generic mono model cannot reliably identify which intelligible speaker is the user. This needs a synchronized playback reference for acoustic echo cancellation, spatial/multichannel processing, or temporary media pause/ducking.
+3. **The Satellite hearing its own chime/TTS:** this is primarily playback lifecycle, half/full-duplex, and AEC-reference handling. Do not treat it as generic background denoising.
+
+Name reference-based processing **acoustic echo cancellation** only when it receives time-aligned playback audio. Home Assistant entity state or a `media_player` relationship does not provide an AEC reference.
+
+### 14.3 Public Home Assistant ecosystem evidence
+
+#### Kiosk Satellite / Android capture
+
+Kiosk Satellite documents that Android's default `VOICE_COMMUNICATION` capture path can be around 20 dB too quiet on custom ROMs even when a normal recorder sounds correct. Its Wake Word Tester guidance is:
+
+- below 0.005 linear RMS: far too quiet;
+- 0.01–0.02: low and unreliable across a room;
+- 0.05–0.1: healthy speech level;
+- sustained above 0.3: likely too hot/clipping.
+
+It exposes `Voice communication`, `Voice recognition`, and raw microphone capture modes, fixed gain from 0–24 dB, optional Android AGC/noise suppression, and explicit channel selection for multichannel USB arrays. The documentation warns that AGC can pump the ambient noise floor and that fixed gain improves level but not signal-to-noise ratio.
+
+Sources:
+
+- <https://github.com/jxlarrea/kiosk-satellite/blob/main/docs/microphone.md>
+- <https://github.com/jxlarrea/kiosk-satellite/blob/main/app/android/app/src/main/kotlin/me/jxl/kiosk_satellite/MicRecorder.kt>
+- <https://developer.android.com/reference/android/media/MediaRecorder.AudioSource>
+- <https://developer.android.com/reference/android/media/audiofx/AcousticEchoCanceler>
+
+Android describes `VOICE_RECOGNITION` as tuned for recognition and `VOICE_COMMUNICATION` as tuned for VoIP. Actual preprocessing and AEC behavior are device/OEM-specific. An effect being available or attached is not proof that it has a valid playback reference or materially improves output.
+
+#### Wyoming Satellite and Linux Voice Assistant
+
+Wyoming Satellite and OHF Linux Voice Assistant use conventional WebRTC automatic gain and noise suppression rather than neural foreground extraction. Wyoming's documented range is AGC 0–31 dBFS and noise suppression 0–4; its tutorial suggests AGC 15 and suppression 2 while warning that stronger suppression may distort audio.
+
+Linux Voice Assistant recommends far-field microphone arrays and hardware DSP where possible. For same-host microphone/speaker playback, it documents PulseAudio/PipeWire WebRTC AEC with explicit source and sink endpoints.
+
+Sources:
+
+- <https://github.com/rhasspy/wyoming-satellite#audio-enhancements>
+- <https://github.com/OHF-Voice/linux-voice-assistant#hardware-requirements>
+- <https://github.com/OHF-Voice/linux-voice-assistant/blob/main/docs/enabling_aec.md>
+- background-TV/VAD report and hardware-AEC outcome: <https://github.com/OHF-Voice/linux-voice-assistant/issues/62>
+
+#### Home Assistant Voice Preview Edition
+
+Voice PE uses an XMOS XU316 edge processor with cumulative AEC, two-microphone interference cancellation, noise suppression, and AGC stages. Public maintainer notes say the wake-word channel omits XMOS AGC because duplicated gain processing increased false accepts, while the STT channel receives the full processing pipeline. Its firmware also ducks media by 20 dB when voice assistance starts.
+
+Even that purpose-built hardware has reports of residual echo, brief AEC breakthroughs, AGC amplifying residual echo, and microphones reopening before playback is physically complete. This supports combining edge DSP with explicit playback lifecycle/media control rather than assuming AEC alone is perfect.
+
+Sources:
+
+- maintainer pipeline explanation: <https://github.com/esphome/home-assistant-voice-pe/issues/299>
+- AEC experiment: <https://github.com/esphome/home-assistant-voice-pe/issues/524>
+- continuous-conversation/self-TTS issue: <https://github.com/esphome/home-assistant-voice-pe/issues/563>
+- firmware and 20 dB ducking: <https://github.com/esphome/home-assistant-voice-pe/blob/dev/home-assistant-voice.yaml>
+
+#### Wake-word and Assist pipeline evidence
+
+OpenWakeWord explicitly warns that music/speech played by the capture device can substantially increase false rejects unless hardware or software AEC is used. It offers Speex suppression for relatively stationary noise and Silero VAD for rejecting non-speech noise, but neither is a target-speaker separator.
+
+Home Assistant Core also has an open report that `assist_satellite` does not forward STT-requested AGC/noise-reduction settings into the Assist pipeline. This may explain why some satellite-side configuration appears ineffective, but it does not directly repair this External Transport path, which sends PCM to OpenAI outside HA's normal STT enhancer.
+
+Sources:
+
+- <https://github.com/dscripka/openWakeWord#noise-suppression-and-voice-activity-detection-vad>
+- <https://github.com/dscripka/openWakeWord/blob/main/docs/models/hey_jarvis.md>
+- <https://github.com/home-assistant/core/issues/180553>
+
+### 14.4 Revised implementation priorities
+
+#### Priority 1: calibrate capture on the physical panel
+
+Before changing Pipecat again, use the Kiosk Satellite Wake Word Tester at the actual kitchen speaking distance:
+
+1. Record RMS and a fixed phrase under `Voice communication`, fixed gain 0 dB.
+2. Repeat under `Voice recognition` and raw microphone modes.
+3. Select the cleanest capture path.
+4. Add fixed gain in 6 dB steps until ordinary speech is approximately 0.05–0.1 RMS, stopping before clipping.
+5. Test Android noise suppression independently against the selected source.
+6. Enable Android AGC only if fixed gain cannot cover both near and far speech; do not combine AGC and fixed gain.
+7. Record the effective source, gain, effect availability/enabled state, microphone device, and channel in debug diagnostics.
+
+Use repeated scripted utterances and alternate test order. Do not judge a mode from one stochastic OpenAI transcript.
+
+#### Priority 2: implement the independent Satellite Media Interference Guard
+
+The physical Satellite configuration should identify nearby Music Assistant/media-player entities. On wake/listening acquisition:
+
+- prefer **pause** where recognition reliability is more important than uninterrupted playback;
+- otherwise duck by approximately 20–30 dB, using Voice PE's 20 dB behavior as an initial reference;
+- restore only state owned by the active interaction lease;
+- handle media that starts while listening;
+- support overlapping interactions and terminal/error cleanup.
+
+A remote kitchen speaker is not part of Android's communication playback graph, so Android AEC cannot cancel it. HA-managed pause/ducking is the correct mechanism and must remain separately testable from Pipecat processing.
+
+#### Priority 3: harden self-playback boundaries
+
+- Do not stream microphone PCM while the wake chime is physically playing.
+- Do not reopen listening merely because TTS bytes finished downloading or queuing; wait for physical playback completion.
+- Add a measured 300–500 ms speaker-tail guard after chime/TTS playback.
+- Suppress barge-in decisions during known local playback unless AEC is verified on that exact device/path.
+- Keep stop-word behavior separately testable because it intentionally listens during playback.
+
+#### Priority 4: finish the provider-only factorial test
+
+With all local ML enhancement disabled, compare matched captures using:
+
+- raw + OpenAI `near_field`;
+- raw + OpenAI `far_field`;
+- selected Android noise suppression + one fixed provider setting.
+
+Do not tune Android processing and provider processing simultaneously. Record transcript accuracy, missed turns, `user.speech_started` count, false interruption count, latency, and clipping/RMS statistics.
+
+#### Priority 5: only then consider conventional server processing
+
+If edge capture selection/gain remains insufficient, a maintained WebRTC/Speex noise-suppression and gain implementation is a more ecosystem-aligned server experiment than another neural denoiser. It must still be profile-scoped, disabled by default, and tested without duplicate Android/provider processing. It is suitable for relatively stationary noise, not competing TV dialogue or target-speaker extraction.
+
+#### Priority 6: use suitable hardware for hard full-room requirements
+
+If reliable speech over loud television/music is mandatory, use a microphone array or conferencing device with hardware DSP/AEC. Kiosk Satellite supports selecting the dedicated ASR channel of multichannel USB arrays; its documentation specifically identifies channel 2 of the reSpeaker XVF3800 as the clean recognition output. Voice PE/Satellite1-class XMOS hardware illustrates the preferred edge architecture.
+
+### 14.5 Current decision
+
+- Keep all production Pipecat enhancer profiles disabled.
+- Retain GTCRN code only as an experimental, reversible backend; do not represent it as accepted.
+- Do not restore the rejected DPDFNet backend/model.
+- Do not begin DTLN until physical capture calibration, media guarding, self-playback gating, and raw near/far provider tests are complete.
+- Prioritize the Satellite-side Media Interference Guard independently from this repository.
+- Preserve raw and processed audit support so future candidates can be evaluated against a fixed corpus rather than anecdotes.
