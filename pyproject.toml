@@ -16,7 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 realtime = [
-  "pipecat-ai[openai]>=1.8.1,<1.9",
+  "pipecat-ai[openai]>=1.8.1,<1.13",
 ]
 tools = [
   "httpx2>=2.12,<3",
