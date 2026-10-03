@@ -1,5 +1,5 @@
 # Pin this tag to an immutable digest before the first production image release.
-FROM python:3.14.7-slim AS runtime
+FROM python:3.15.0rc2-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
