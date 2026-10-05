@@ -81,6 +81,33 @@ async def test_initial_context_sends_tools_without_creating_response() -> None:
     assert calls == ["process_calls", "session_update"]
 
 
+async def test_tool_first_item_brackets_response_before_arguments() -> None:
+    from types import SimpleNamespace
+
+    from pipecat.frames.frames import LLMFullResponseStartFrame
+
+    frames = []
+
+    class Service:
+        async def _handle_evt_conversation_item_added(self, event):
+            frames.append("tracked")
+
+        async def push_frame(self, frame):
+            frames.append(frame)
+
+    service = _ready_openai_service(Service, asyncio.Event(), asyncio.Queue())()
+    await service._handle_evt_conversation_item_added(
+        SimpleNamespace(item=SimpleNamespace(type="function_call"))
+    )
+    assert frames[0] == "tracked"
+    assert isinstance(frames[1], LLMFullResponseStartFrame)
+    frames.clear()
+    await service._handle_evt_conversation_item_added(
+        SimpleNamespace(item=SimpleNamespace(type="message"))
+    )
+    assert frames == ["tracked"]
+
+
 def test_text_chunk_normalizer_repairs_missing_sentence_space_only() -> None:
     assert (
         _normalize_text_chunk(["First sentence."], "Second sentence.")

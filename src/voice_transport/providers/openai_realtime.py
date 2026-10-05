@@ -136,6 +136,14 @@ def _ready_openai_service(
             if isinstance(transcript, str) and transcript:
                 await events.put(AgentEvent("user.transcript.final", text=transcript))
 
+        async def _handle_evt_conversation_item_added(self, event):
+            await super()._handle_evt_conversation_item_added(event)
+            # Function items have no assistant role, so upstream does not
+            # bracket a tool-first response. The actor must see its start
+            # before the bridge emits tool events, even without speech/text.
+            if event.item.type == "function_call":
+                await self.push_frame(LLMFullResponseStartFrame())
+
         async def _handle_context(self, context) -> None:
             # In a native realtime conversation, the first context arrives
             # upstream from the assistant aggregator after OpenAI has already
@@ -420,6 +428,11 @@ class OpenAIRealtimeAgentSession:
         # schema-managed registration path. This makes handlers available for
         # the initial session.update without legacy duplicate registration.
         llm._sync_registered_tool_handlers(tool_schemas)
+        # Native audio can call a tool before any aggregator context frame.
+        # Seed the shared mirror now so results can be returned to OpenAI;
+        # do not synthesize a user turn or an unsolicited model response.
+        llm._context = context
+        llm._llm_needs_conversation_setup = False
         self._llm = llm
         processors = [self._source]
         if self._audio_enhancer is not None:

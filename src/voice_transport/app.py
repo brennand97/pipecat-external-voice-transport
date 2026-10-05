@@ -68,7 +68,9 @@ async def _cancel_task(task: asyncio.Task | None, timeout: float = 3.0) -> None:
         task.cancel()
     try:
         await asyncio.wait_for(task, timeout=timeout)
-    except (asyncio.CancelledError, TimeoutError):
+    except (asyncio.CancelledError, TimeoutError, WebSocketDisconnect):
+        # A completed writer can fail during a normal peer disconnect. Its
+        # exception must not skip stream revocation and registry removal.
         pass
 
 
@@ -311,6 +313,8 @@ def create_app(settings: Settings) -> FastAPI:
                 raise ProtocolViolation(
                     "session_start_timeout", "Timed out waiting for session.start."
                 ) from err
+            if first.get("type") == "websocket.disconnect":
+                return
             if first.get("type") != "websocket.receive" or first.get("text") is None:
                 raise ProtocolViolation(
                     "invalid_first_message",

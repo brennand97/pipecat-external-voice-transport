@@ -1,0 +1,6 @@
+# Small, network-free provider runtime. No Pipecat/OpenAI/ML extras.
+fastapi==0.141.1
+uvicorn==0.52.4
+websockets==17.1
+mcp==2.1.1
+httpx2==2.12.0

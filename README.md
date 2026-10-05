@@ -331,6 +331,10 @@ IMAGE_TAG=<prior-tag> docker compose pull
 IMAGE_TAG=<prior-tag> docker compose up -d
 ```
 
+## Disposable browser integration tests
+
+See [tests/e2e/README.md](tests/e2e/README.md) for the small deterministic-provider image and real-network audio/tool checks. The separate `ha-integration-testbed` checkout owns HA/HACS/runtime infrastructure; `voice-satellite-card-integration/tests/e2e` owns the browser/HA fixtures. This does not change the production provider or container entrypoint.
+
 ## Local development
 
 Create an isolated environment and install all development extras:
