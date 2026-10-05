@@ -267,6 +267,7 @@ def ready_message(
             "streaming_audio_url": True,
             "interruptions": True,
             "conversation_continuation": True,
+            "prompt_append": True,
         },
     }
     if effective_profile is not None:

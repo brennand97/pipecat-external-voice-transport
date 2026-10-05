@@ -39,6 +39,7 @@ def test_ready_metadata_never_echoes_prompt_content() -> None:
     assert ready["effective_tools"] == ["safe"]
     assert ready["effective_voice"] == "ballad"
     assert "initial_prompt" not in ready
+    assert ready["capabilities"]["prompt_append"] is True
 
 
 def test_generic_text_client_has_no_satellite_or_device_context() -> None:
