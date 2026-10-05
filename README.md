@@ -233,6 +233,8 @@ It sends `session.start`, waits for `session.ready`, and then submits explicit t
 }
 ```
 
+`conversation.prompt_append` optionally appends personal context/preferences after the server defaults without replacing them. If `initial_prompt` is also supplied, the addition follows that override. It is session-local, never echoed in readiness metadata, and accepts a non-empty string up to 16,000 UTF-8 bytes (or null/omitted for no addition). Existing clients and full overrides remain supported.
+
 `initial_prompt` must be a non-empty string up to 16,000 UTF-8 bytes; `initial_voice` must be a non-empty string up to 128 bytes. Omit either field (or supply `null`) to use the deployment default. Then start an audio turn:
 
 ```json

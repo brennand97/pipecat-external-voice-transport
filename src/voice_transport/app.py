@@ -335,6 +335,7 @@ def create_app(settings: Settings) -> FastAPI:
                 audit=app.state.audit,
                 session_id=start.session_id,
                 initial_prompt=start.initial_prompt,
+                prompt_append=start.prompt_append,
                 initial_voice=start.initial_voice,
                 tool_profile=start.tool_profile,
                 requested_tools=start.requested_tools,

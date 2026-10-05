@@ -122,3 +122,18 @@ def test_accepts_only_defined_controls() -> None:
     )
     with pytest.raises(ProtocolViolation, match="Unsupported"):
         validate_control({"type": "input.pause"})
+
+
+@pytest.mark.parametrize("value", [None, "Personal context"])
+def test_optional_prompt_append(value):
+    message = valid_start()
+    message["conversation"]["prompt_append"] = value
+    assert parse_session_start(message).prompt_append == value
+
+
+@pytest.mark.parametrize("value", ["", " ", 3, "é" * 8001])
+def test_invalid_prompt_append(value):
+    message = valid_start()
+    message["conversation"]["prompt_append"] = value
+    with pytest.raises(ProtocolViolation):
+        parse_session_start(message)

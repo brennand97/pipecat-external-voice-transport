@@ -30,6 +30,7 @@ class SessionStart:
     conversation_id: str | None = None
     wake_word: str | None = None
     initial_prompt: str | None = None
+    prompt_append: str | None = None
     initial_voice: str | None = None
     tool_profile: str | None = None
     requested_tools: tuple[str, ...] | None = None
@@ -128,6 +129,7 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
     conversation_id = conversation.get("id")
     wake_word = conversation.get("wake_word")
     initial_prompt = conversation.get("initial_prompt")
+    prompt_append = conversation.get("prompt_append")
     initial_voice = conversation.get("initial_voice")
     tool_profile = conversation.get("profile")
     requested_tools = conversation.get("requested_tools")
@@ -182,6 +184,17 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
                 "initial_prompt_too_large",
                 "conversation.initial_prompt exceeds 16,000 bytes.",
             )
+    if prompt_append is not None:
+        if not isinstance(prompt_append, str) or not prompt_append.strip():
+            raise ProtocolViolation(
+                "invalid_message",
+                "conversation.prompt_append must be a non-empty string or null.",
+            )
+        if len(prompt_append.encode()) > 16_000:
+            raise ProtocolViolation(
+                "prompt_append_too_large",
+                "conversation.prompt_append exceeds 16,000 bytes.",
+            )
     if initial_voice is not None:
         if not isinstance(initial_voice, str) or not initial_voice.strip():
             raise ProtocolViolation(
@@ -202,6 +215,7 @@ def parse_session_start(message: dict[str, Any]) -> SessionStart:
         conversation_id=conversation_id,
         wake_word=wake_word,
         initial_prompt=initial_prompt,
+        prompt_append=prompt_append,
         initial_voice=initial_voice,
         tool_profile=tool_profile,
         requested_tools=tuple(requested_tools) if requested_tools is not None else None,

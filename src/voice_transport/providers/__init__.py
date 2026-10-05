@@ -14,7 +14,7 @@ from .base import RealtimeProvider, RealtimeProviderConfig
 from .fake import FakeRealtimeProvider
 
 DEFAULT_SYSTEM_INSTRUCTION = (
-    "Your name is Reginold. You are a concise, helpful voice assistant. "
+    "Your name is Reginald. You are a concise, helpful voice assistant. "
     "Speak naturally and keep answers brief. When a user asks to inspect or control "
     "their connected home, use the available tools. Before every required tool result "
     "is available, emit no assistant text or audio. Never say that you are checking, "
@@ -56,6 +56,7 @@ def create_agent_session(
     audit: SessionAuditLog | None = None,
     session_id: str = "",
     initial_prompt: str | None = None,
+    prompt_append: str | None = None,
     initial_voice: str | None = None,
     tool_profile: str | None = None,
     requested_tools: tuple[str, ...] | None = None,
@@ -78,8 +79,13 @@ def create_agent_session(
         ),
         session_end_event=session_end_event,
     )
+    instruction = initial_prompt or DEFAULT_SYSTEM_INSTRUCTION
+    if prompt_append and prompt_append.strip():
+        instruction += (
+            "\n\nAdditional context and preferences:\n" + prompt_append.strip()
+        )
     config = RealtimeProviderConfig(
-        system_instruction=initial_prompt or DEFAULT_SYSTEM_INSTRUCTION,
+        system_instruction=instruction,
         tool_registry=tool_registry,
         audio_input=(
             tool_registry.audio_input
