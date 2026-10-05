@@ -268,13 +268,15 @@ class ConversationActor:
             if event.type == "assistant.response_started":
                 if not self._accept_response_events:
                     return
-                # A newer audio turn can be opened while Realtime is still
-                # deciding whether to respond to the prior turn. Never let
-                # that stale response reach the client: it would cause the
-                # new user's transcript to appear after an unrelated answer.
+                # Opening audio capture is not evidence of new user speech:
+                # HA opens the next listening turn as soon as a tool-only
+                # response starts. Its spoken continuation still belongs to
+                # the prior request. Provider VAD owns audio interruption.
+                # A pending text turn, however, is explicit new input.
                 open_turn = self.open_turn_id
                 if (
                     open_turn is not None
+                    and self._open_turn[1] is TurnInput.TEXT
                     and self._last_ended_turn is not None
                     and open_turn != self._last_ended_turn
                 ):

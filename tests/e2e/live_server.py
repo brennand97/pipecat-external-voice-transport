@@ -84,6 +84,7 @@ async def main(run_path, key_file):
         "transcripts": [],
         "timer_starts": [],
         "answers": [],
+        "audio_deliveries": [],
         "events": {},
         "session_contexts": [],
         "incoming_events": {},
@@ -182,6 +183,13 @@ async def main(run_path, key_file):
                     data = json.loads(message["text"])
                     typ = data.get("type")
                     stats["events"][typ] = stats["events"].get(typ, 0) + 1
+                    if typ == "assistant.audio":
+                        stats["audio_deliveries"].append(
+                            {
+                                "response_id": data.get("response_id"),
+                                "timer_starts_seen": len(stats["timer_starts"]),
+                            }
+                        )
                     if typ == "assistant.text.final":
                         stats["answers"].append(data.get("text", ""))
                     if typ == "session.finished":

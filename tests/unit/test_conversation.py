@@ -167,19 +167,52 @@ async def test_tool_events_retain_completed_response_correlation() -> None:
     await actor.close()
 
 
-async def test_new_audio_turn_fences_a_late_response_for_prior_turn() -> None:
+async def test_quiet_audio_capture_preserves_post_tool_speech_and_audio() -> None:
+    provider = Provider()
+    actor = ConversationActor(provider)
+    await actor.start()
+    events = actor.events()
+    await actor.start_turn("one", TurnInput.AUDIO)
+    await actor.end_turn("one")
+    await actor._handle_provider_event(AgentEvent("assistant.response_started"))
+    first = await anext(events)
+    await actor._handle_provider_event(AgentEvent("assistant.response_finished"))
+    await anext(events)
+    # Reproduce HA opening quiet follow-up capture before tool-result speech.
+    await actor.start_turn("two", TurnInput.AUDIO)
+    await actor.submit_audio("two", b"\\x00\\x00")
+    for event in (
+        AgentEvent("assistant.response_started"),
+        AgentEvent("assistant.text.delta", text="Timer started."),
+        AgentEvent(
+            "assistant.audio.chunk", audio=b"speech", sample_rate=24000, channels=1
+        ),
+        AgentEvent("assistant.response_finished"),
+    ):
+        await actor._handle_provider_event(event)
+    forwarded = [await anext(events) for _ in range(4)]
+    assert [e.type for e in forwarded] == [
+        "assistant.response_started",
+        "assistant.text.delta",
+        "assistant.audio.chunk",
+        "assistant.response_finished",
+    ]
+    assert all(e.turn_id == "one" for e in forwarded)
+    assert forwarded[0].response_id != first.response_id
+    assert forwarded[2].audio == b"speech"
+    assert ("interrupt",) not in provider.calls
+    await actor.close()
+
+
+async def test_pending_text_turn_still_fences_prior_response() -> None:
     provider = Provider()
     actor = ConversationActor(provider)
     await actor.start()
     await actor.start_turn("one", TurnInput.AUDIO)
     await actor.end_turn("one")
-    await actor.start_turn("two", TurnInput.AUDIO)
-
-    await provider.events_queue.put(AgentEvent("assistant.response_started"))
-    await asyncio.sleep(0)
-
+    await actor.start_turn("two", TurnInput.TEXT)
+    await actor._handle_provider_event(AgentEvent("assistant.response_started"))
     assert provider.calls[-1] == ("interrupt",)
-    assert actor.active_response_id is None
     assert actor._events.empty()
     await actor.close()
 
